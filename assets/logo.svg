@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800" role="img" aria-label="Contexly logo">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ef2e8"/>
+      <stop offset="100%" stop-color="#1bc7ff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="800" height="800" fill="#081525"/>
+
+  <!-- outer C ring -->
+  <path d="M620 160A260 260 0 1 0 620 640" fill="none" stroke="url(#g1)" stroke-width="72" stroke-linecap="round" filter="url(#glow)"/>
+
+  <!-- inner C ring -->
+  <path d="M580 220A190 190 0 1 0 580 580" fill="none" stroke="#73fff7" stroke-opacity="0.9" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- connection lines -->
+  <g stroke="#b4fff9" stroke-width="12" stroke-linecap="round" fill="none" filter="url(#glow)">
+    <line x1="255" y1="330" x2="475" y2="330"/>
+    <line x1="255" y1="400" x2="430" y2="400"/>
+    <line x1="255" y1="470" x2="475" y2="470"/>
+  </g>
+
+  <!-- nodes -->
+  <g fill="#9ffcf7" stroke="#d7ffff" stroke-width="8" filter="url(#glow)">
+    <circle cx="495" cy="330" r="26"/>
+    <circle cx="450" cy="400" r="16"/>
+    <circle cx="495" cy="470" r="26"/>
+  </g>
+</svg>
