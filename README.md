@@ -153,7 +153,7 @@ Recent local checks:
 - Final end-to-end checks on fresh environment
 - Version bump (when needed)
 - Git tag and release notes
-- PyPI publish for `pip install contexly-engine`
+- PyPI publish for `pip install contexly`
 
 After PyPI publish, add downloads badge:
 
