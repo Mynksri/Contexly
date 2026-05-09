@@ -1,0 +1,15 @@
+Task: <describe task>
+Project path: <absolute or repo root path>
+
+Use Contexly MCP with this flow:
+1) query(path, query_text, depth=1, level=2)
+2) next_in_progress(path, query_text)
+3) present breakdown in chat, then implement changes
+4) impact(path, function_name) if signature/API changes
+5) optional: session_step/session_update only if user asked to persist session.md
+
+Return:
+- Files changed
+- Why changed
+- Risks
+- Next steps

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "contexly": {
+      "command": "python",
+      "args": [
+        "contexly_mcp.py"
+      ],
+      "cwd": "C:/Users/Rani/.vscode/github-repo-context/contexly",
+      "env": {
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
