@@ -1,9 +1,5 @@
 # Contexly - Codebase Context Engine
 
-<p align="center">
-	<img src="assets/logo.svg" alt="Contexly logo" width="220" />
-</p>
-
 > AI doesn't need your code. It needs your logic.
 
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
