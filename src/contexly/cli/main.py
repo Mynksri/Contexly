@@ -25,6 +25,10 @@ def main():
         print_help()
         return
 
+    rebuild = "--rebuild" in args
+    if rebuild:
+        args = [a for a in args if a != "--rebuild"]
+
     cmd = args[0]
     path = args[1] if len(args) > 1 else "."
 
@@ -38,7 +42,7 @@ def main():
         cmd_status(path)
     elif cmd == "index":
         level = int(args[2]) if len(args) > 2 else 1
-        cmd_index(path, level)
+        cmd_index(path, level, rebuild=rebuild)
     elif cmd == "query":
         query_args = args[2:]
         debug = "--debug" in query_args
@@ -46,11 +50,11 @@ def main():
         query_str = positional[0] if len(positional) > 0 else ""
         depth = int(positional[1]) if len(positional) > 1 else 1
         level = int(positional[2]) if len(positional) > 2 else 2
-        cmd_query(path, query_str, depth=depth, level=level, debug=debug)
+        cmd_query(path, query_str, depth=depth, level=level, debug=debug, rebuild=rebuild)
     elif cmd == "impact":
         function_name = args[2] if len(args) > 2 else ""
         file_hint = args[3] if len(args) > 3 else None
-        cmd_impact(path, function_name, file_hint)
+        cmd_impact(path, function_name, file_hint, rebuild=rebuild)
     elif cmd == "session":
         cmd_session(args[1:])
     elif cmd in ("-h", "--help", "help"):
@@ -155,7 +159,7 @@ def cmd_status(path: str):
         print("Run 'contexly tree <path>' first.")
 
 
-def cmd_index(path: str, level: int = 1):
+def cmd_index(path: str, level: int = 1, rebuild: bool = False):
     """
     Build and print a lightweight index of the codebase.
 
@@ -170,10 +174,12 @@ def cmd_index(path: str, level: int = 1):
     # Try loading existing tree first (fast path)
     out_dir = _get_output_dir(path)
     tree_file = out_dir / "tree.json"
-    if tree_file.exists():
+    if tree_file.exists() and not rebuild:
         tree = builder.load(str(tree_file))
         print(f"  (loaded cached tree from {tree_file})")
     else:
+        if rebuild and tree_file.exists():
+            print(f"  (--rebuild) ignoring cached tree: {tree_file}")
         print(f"Building tree for: {abs_path} ...")
         tree = builder.build(path)
         builder.save(tree, str(tree_file))
@@ -191,7 +197,7 @@ def cmd_index(path: str, level: int = 1):
     print(f"\n~{tokens} tokens")
 
 
-def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool = False):
+def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool = False, rebuild: bool = False):
     """
     Smart search: find relevant files and build a targeted tree.
 
@@ -218,10 +224,12 @@ def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool
 
     out_dir = _get_output_dir(path)
     tree_file = out_dir / "tree.json"
-    if tree_file.exists():
+    if tree_file.exists() and not rebuild:
         tree = builder.load(str(tree_file))
         print(f"  (loaded cached tree from {tree_file})")
     else:
+        if rebuild and tree_file.exists():
+            print(f"  (--rebuild) ignoring cached tree: {tree_file}")
         print(f"Building tree for: {abs_path} ...")
         tree = builder.build(path)
         builder.save(tree, str(tree_file))
@@ -272,7 +280,7 @@ def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool
     print(f"\nSaved: {targeted_file}")
 
 
-def cmd_impact(path: str, function_name: str, file_hint: str = None):
+def cmd_impact(path: str, function_name: str, file_hint: str = None, rebuild: bool = False):
     """
     Show impact preview before editing a function.
     Lists all callers detected via call_graph + skeleton references.
@@ -287,9 +295,11 @@ def cmd_impact(path: str, function_name: str, file_hint: str = None):
     builder = TreeBuilder()
     out_dir = _get_output_dir(path)
     tree_file = out_dir / "tree.json"
-    if tree_file.exists():
+    if tree_file.exists() and not rebuild:
         tree = builder.load(str(tree_file))
     else:
+        if rebuild and tree_file.exists():
+            print(f"(--rebuild) ignoring cached tree: {tree_file}")
         print(f"Building tree for: {os.path.abspath(path)} ...")
         tree = builder.build(path)
         builder.save(tree, str(tree_file))
@@ -370,6 +380,7 @@ def print_help():
 Contexly - Codebase Context Engine
 
 USAGE:
+    contexly [--rebuild] <command> [args]        Force fresh tree build (skip cache)
     contexly init [path]                         Initialize Contexly for a project
     contexly tree [path]                         Build full logic skeleton tree
     contexly index [path] [level]                Lightweight index (level 0=map, 1=skeletons)
@@ -389,6 +400,8 @@ LEVELS:
   3  Full skeleton + project context header
 
 EXAMPLES:
+    contexly --rebuild index . 0                 # force fresh tree then map
+    contexly --rebuild query . "auth flow" 2 2  # force fresh tree then targeted query
     contexly index . 0                           # ultra-lightweight repo map
     contexly index . 1                           # file skeletons with tags
         contexly query . "fix rate limiting" 1 2     # search + targeted depth-1 skeleton
