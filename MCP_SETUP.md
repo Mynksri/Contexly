@@ -38,7 +38,7 @@ Use this same block in each client's MCP server config area:
     "contexly": {
       "command": "python",
       "args": ["contexly_mcp.py"],
-      "cwd": "C:/Users/Rani/.vscode/github-repo-context/contexly",
+      "cwd": "/path/to/contexly",
       "env": {
         "PYTHONUTF8": "1"
       }

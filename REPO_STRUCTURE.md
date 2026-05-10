@@ -346,7 +346,7 @@ testpaths = tests
       "contexly": {
         "command": "python",
         "args": ["contexly_mcp.py"],
-        "cwd": "C:/Users/Rani/.vscode/github-repo-context/contexly"
+        "cwd": "/path/to/contexly"
       }
     }
   }

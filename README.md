@@ -1,6 +1,7 @@
 # Contexly - Codebase Context Engine
 
-> AI doesn't need your code. It needs your logic.
+> Give your AI agent a GPS, not a map dump.
+> Contexly tells agents exactly where to edit, what can break, and why.
 
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -8,16 +9,17 @@
 ![Tests](https://img.shields.io/badge/tests-63%20passed-brightgreen)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
-Contexly extracts the logic skeleton of your codebase - function signatures, conditions, calls, returns.
-Not raw code. The meaning.
+Contexly extracts the logic skeleton of your codebase: function signatures,
+conditions, calls, returns, and impact paths.
 
-Your AI gets full codebase understanding.
-Fewer tokens. No context resets.
+Not raw code. The behavior map.
 
 ## Why Contexly
 
-Without structure, agents keep re-reading large files, burn tokens, and still miss execution flow.
-Contexly builds a compact logic map first, so the agent jumps to the right files and functions immediately.
+Most agent failures are not syntax bugs. They are navigation bugs.
+The model edits 2-3 obvious files, misses dependent files, then reports "done".
+
+Contexly solves this by giving an execution-level map first, then targeted context.
 
 What you get:
 
@@ -25,17 +27,48 @@ What you get:
 - Context lookup by file, function, and behavior intent
 - Fast CLI + MCP workflow for day-to-day coding tasks
 
-## Real Numbers
+## How Agents Use Contexly
+
+```bash
+# Agent gets task: "fix pivot hedge logic"
+contexly query . "pivot hedge" 2 2
+```
+
+Agent immediately sees:
+
+- `price_monitor.py` - signal decision point
+- `round_manager.py` - amount calculation
+- `round_manager.py` - execution path
+- impact chain for related downstream modules
+
+Then it edits only relevant files, not the whole repo.
+
+## Why I Built This
+
+I was building a SaaS product on top of OpenClaw + n8n
+(roughly 700k lines combined).
+
+My agent kept patching a few files and missing cross-codebase impact.
+Contexly was built to fix that exact failure mode.
+
+## Bonus: Contexly Flags Smells
+
+Contexly surfaces patterns like duplicate execution functions,
+legacy overlap, and risky impact chains while building/querying context.
+
+This helps agents avoid copy-paste regressions before they happen.
+
+## Real Example - Polymarket Trading Bot
 
 Ran on a real 13-file Python trading bot:
 
 | | Before | After |
 |---|---|---|
-| Tokens sent to AI | 197,068 | 7,654 |
-| Compression | - | **95.9%** |
+| Tokens sent to AI | 197,068 | 7,727 |
+| Compression | - | **95.8%** |
 | AI reads raw code? | Every message | Never |
 
-Same understanding. 26x fewer tokens.
+Same understanding. 25x fewer tokens.
 
 
 ## Supported Languages

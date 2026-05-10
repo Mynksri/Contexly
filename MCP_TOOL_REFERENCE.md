@@ -280,7 +280,7 @@ Solution: Ensure session_new() was called first
 
 All tools write to:
 ```
-~/.vscode/github-repo-context/contexly-outputs/[project-name]/
+<project>/.contexly/
 ```
 
 Files created:
