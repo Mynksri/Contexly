@@ -6,7 +6,7 @@
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-72%20passed-brightgreen)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
 Contexly extracts the logic skeleton of your codebase: function signatures,
