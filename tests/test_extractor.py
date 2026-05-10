@@ -169,3 +169,50 @@ export const Widget = () => {
     finally:
         os.unlink(fpath)
 
+
+def test_extract_tsx_default_export_function_component():
+    extractor = SkeletonExtractor()
+    code = '''
+import { useEffect, useState } from "react";
+
+export default function ComponentB({ id }: { id: string }) {
+    const [state, setState] = useState(0);
+    useEffect(() => {
+        if (id) setState(1);
+    }, [id]);
+    return <div>{state}</div>;
+}
+'''
+    with tempfile.NamedTemporaryFile(suffix=".tsx", mode="w", delete=False) as f:
+        f.write(code)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        names = [fn.name for fn in skeleton.functions]
+        assert "ComponentB" in names
+        fn = next(fn for fn in skeleton.functions if fn.name == "ComponentB")
+        calls_joined = " ".join(fn.calls)
+        assert "useState" in calls_joined
+        assert "useEffect" in calls_joined
+    finally:
+        os.unlink(fpath)
+
+
+def test_extract_compact_one_line_tsx_component():
+    extractor = SkeletonExtractor()
+    code = "import { useEffect, useState } from 'react';\nexport default function ComponentB({ id }: { id: string }) { const [state, setState] = useState(0); useEffect(() => { if (id) setState(1); }, [id]); return <div>{state}</div>; }"
+    with tempfile.NamedTemporaryFile(suffix=".tsx", mode="w", delete=False) as f:
+        f.write(code)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        names = [fn.name for fn in skeleton.functions]
+        assert "ComponentB" in names
+        fn = next(fn for fn in skeleton.functions if fn.name == "ComponentB")
+        assert any("useState" in c for c in fn.calls)
+        assert any("useEffect" in c for c in fn.calls)
+    finally:
+        os.unlink(fpath)
+

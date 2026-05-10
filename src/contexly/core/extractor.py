@@ -293,6 +293,12 @@ class SkeletonExtractor:
                     for assigned in self._extract_assigned_functions(node, lines, config):
                         add_function(assigned)
 
+        # Some TSX/React syntaxes can still parse without discoverable function nodes.
+        # If tree-sitter produced imports-only output, recover top-level symbols via regex.
+        if config.name in ("javascript", "typescript") and not functions:
+            for recovered in self._extract_js_ts_functions_regex(source, lines):
+                add_function(recovered)
+
         constants = self._extract_constants(root, lines, config)
         has_main_guard = self._has_main_guard(source)
         is_entry_point = self._is_entry_point(source, functions)
@@ -425,6 +431,105 @@ class SkeletonExtractor:
 
         return params[:12]
 
+    def _extract_js_ts_functions_regex(
+        self,
+        source: str,
+        lines: List[str],
+    ) -> List[FunctionSkeleton]:
+        """Best-effort fallback for JS/TS/TSX top-level component/function patterns."""
+        import re
+
+        funcs: List[FunctionSkeleton] = []
+        seen: set[str] = set()
+
+        patterns = [
+            re.compile(r"\bexport\s+default\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)"),
+            re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)"),
+            re.compile(r"\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=]+)?=\s*(?:async\s*)?\(([^)]*)\)\s*=>"),
+        ]
+
+        code_lines = source.split("\n")
+
+        def parse_params(raw: str) -> List[str]:
+            raw = raw.strip()
+            if not raw:
+                return []
+            parts = [p.strip() for p in raw.split(",") if p.strip()]
+            out: List[str] = []
+            for part in parts:
+                part = part.split(":")[0].split("=")[0].strip()
+                part = part.strip("{}[]")
+                if part and part not in ("self", "cls"):
+                    out.append(part)
+            return out[:12]
+
+        def scan_body(start_idx: int) -> tuple[int, List[str], List[str], List[str]]:
+            calls: List[str] = []
+            conds: List[str] = []
+            rets: List[str] = []
+            depth = 0
+            seen_open = False
+            end_idx = min(start_idx + 60, len(code_lines) - 1)
+            for i in range(start_idx, min(start_idx + 60, len(code_lines))):
+                ln = code_lines[i]
+                depth += ln.count("{") - ln.count("}")
+                if "{" in ln:
+                    seen_open = True
+                stripped = ln.strip()
+                if stripped.startswith("if ") or stripped.startswith("if("):
+                    conds.append(stripped.rstrip(":;"))
+                if "return " in stripped:
+                    rets.append(stripped.rstrip(";"))
+                for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_\.]*)\s*\(", ln):
+                    nm = m.group(1)
+                    if nm in {"if", "for", "while", "switch", "return", "function"}:
+                        continue
+                    if nm not in calls:
+                        calls.append(nm)
+                if seen_open and depth <= 0 and i > start_idx:
+                    end_idx = i
+                    break
+            return end_idx, calls[:15], conds[:10], rets[:6]
+
+        for i, line in enumerate(code_lines):
+            for pat in patterns:
+                m = pat.search(line)
+                if not m:
+                    continue
+                name = m.group(1)
+                if not name or name in seen or name.startswith("_test") or name == "test":
+                    continue
+                seen.add(name)
+                params_raw = m.group(2) if m.lastindex and m.lastindex >= 2 else ""
+                end_idx, calls, conds, rets = scan_body(i)
+                funcs.append(FunctionSkeleton(
+                    name=name,
+                    line_start=i + 1,
+                    line_end=end_idx + 1,
+                    is_async="async" in line,
+                    is_method=False,
+                    class_name=None,
+                    parameters=parse_params(params_raw),
+                    calls=calls,
+                    conditions=conds,
+                    returns=rets,
+                    raises=[],
+                    decorators=[],
+                    logic_vars=[],
+                    purpose=self._infer_function_purpose(
+                        name=name,
+                        calls=calls,
+                        conditions=conds,
+                        returns=rets,
+                        state_writes=[],
+                        is_async=("async" in line),
+                    ),
+                    sections=[],
+                    state_writes=[],
+                ))
+
+        return funcs
+
     def _extract_imports(
         self, root: "Node", lines: List[str], config: LanguageConfig
     ) -> List[str]:
@@ -450,6 +555,7 @@ class SkeletonExtractor:
         class_name: Optional[str] = None,
     ) -> Optional[FunctionSkeleton]:
         """Extract a single function's skeleton."""
+        import re
         name = ""
         is_async = False
         parameters = []
@@ -460,11 +566,29 @@ class SkeletonExtractor:
             if child.type == "identifier":
                 name = child.text.decode("utf-8")
                 break
+            if child.type == "property_identifier" and not name:
+                name = child.text.decode("utf-8")
             if child.type == "async":
                 is_async = True
             if child.type == "decorator":
                 dec_text = lines[child.start_point[0]].strip()
                 decorators.append(dec_text)
+
+        # Fallback for TSX/JS exported function forms where identifier child may be absent.
+        if not name:
+            fn_text = node.text.decode("utf-8", errors="ignore")
+            first_line = fn_text.split("\n", 1)[0]
+            patterns = [
+                r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]",
+                r"\blet\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]",
+                r"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:=]",
+            ]
+            for pat in patterns:
+                m = re.search(pat, first_line)
+                if m:
+                    name = m.group(1)
+                    break
 
         if not name or name.startswith("_test") or name == "test":
             return None  # skip test functions
@@ -473,7 +597,7 @@ class SkeletonExtractor:
         for child in node.children:
             if child.type in ("parameters", "formal_parameters"):
                 for param in child.children:
-                    if param.type == "identifier":
+                    if param.type in ("identifier", "property_identifier"):
                         pname = param.text.decode("utf-8")
                         if pname != "self" and pname != "cls":
                             parameters.append(pname)
