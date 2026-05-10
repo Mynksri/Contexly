@@ -117,6 +117,44 @@ class TestBuildRegressions:
 
         assert helper_path in tree.nodes[main_path].connections
 
+    def test_tsconfig_alias_connections_resolve(self, tmp_path):
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}'
+        )
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / "utils.ts").write_text(
+            "export const calc = () => 1;\n"
+        )
+        (tmp_path / "main.ts").write_text(
+            "import { calc } from '@/utils'\n"
+            "export const run = () => calc()\n"
+        )
+
+        builder = TreeBuilder()
+        tree = builder.build(str(tmp_path))
+
+        norm_paths = {p.replace("\\", "/"): p for p in tree.nodes}
+        main_path = next(v for k, v in norm_paths.items() if k.endswith("main.ts"))
+        util_path = next(v for k, v in norm_paths.items() if k.endswith("src/utils.ts"))
+        assert util_path in tree.nodes[main_path].connections
+
+    def test_reexport_from_connections_resolve(self, tmp_path):
+        (tmp_path / "lib").mkdir(exist_ok=True)
+        (tmp_path / "lib" / "core.ts").write_text(
+            "export const core = () => 1;\n"
+        )
+        (tmp_path / "index.ts").write_text(
+            "export { core } from './lib/core'\n"
+        )
+
+        builder = TreeBuilder()
+        tree = builder.build(str(tmp_path))
+
+        norm_paths = {p.replace("\\", "/"): p for p in tree.nodes}
+        index_path = next(v for k, v in norm_paths.items() if k.endswith("index.ts"))
+        core_path = next(v for k, v in norm_paths.items() if k.endswith("lib/core.ts"))
+        assert core_path in tree.nodes[index_path].connections
+
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #  Level 1 â€” File Index

@@ -430,13 +430,16 @@ class SkeletonExtractor:
     ) -> List[str]:
         """Extract import statements as clean strings."""
         imports = []
+        seen = set()
         for node in root.children:
-            if node.type in config.import_types:
+            if node.type in config.import_types or node.type in ("export_statement", "export_declaration"):
                 line = lines[node.start_point[0]].strip()
-                # Clean up long import lines
-                if len(line) > 80:
-                    line = line[:77] + "..."
-                imports.append(line)
+                if not line:
+                    continue
+                # Keep full import text for accurate path resolution later.
+                if line not in seen:
+                    imports.append(line)
+                    seen.add(line)
         return imports
 
     def _extract_function(
@@ -1299,6 +1302,7 @@ class SkeletonExtractor:
         > = CALLS    ? = IF condition    < = RETURNS
         ! = RAISES   ~ = async           [N] = line number
         """
+        import re
         lines = []
         fname = os.path.basename(skeleton.filepath)
         lines.append(f"FILE:{fname} [{skeleton.language}]")
@@ -1314,9 +1318,17 @@ class SkeletonExtractor:
                     parts = imp.split()
                     if len(parts) >= 2:
                         import_names.append(parts[1])
+                elif imp.startswith("export "):
+                    match = re.search(r"from\s+['\"]([^'\"]+)['\"]", imp)
+                    if match:
+                        import_names.append(match.group(1))
                 elif imp.startswith("import "):
                     names = imp.replace("import ", "").split(",")
                     import_names.extend([n.strip() for n in names])
+                else:
+                    match = re.search(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)", imp)
+                    if match:
+                        import_names.append(match.group(1))
             if import_names:
                 lines.append(f"IMPORTS:{','.join(import_names[:12])}")
 

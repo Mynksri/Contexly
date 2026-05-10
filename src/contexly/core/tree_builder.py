@@ -111,6 +111,7 @@ class TreeBuilder:
             exclude_dirs=exclude_dirs,
             exclude_file_patterns=exclude_file_patterns,
         )
+        aliases = self._load_module_aliases(root_path)
 
         nodes = {}
         total_tokens = 0
@@ -121,7 +122,10 @@ class TreeBuilder:
             total_tokens += tokens
 
             connections = self._find_connections(
-                skeleton.imports, list(skeletons.keys()), current_path=filepath
+                skeleton.imports,
+                list(skeletons.keys()),
+                current_path=filepath,
+                aliases=aliases,
             )
 
             # Compute line range
@@ -1119,6 +1123,7 @@ class TreeBuilder:
         imports: List[str],
         all_paths: List[str],
         current_path: Optional[str] = None,
+        aliases: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         """
         Find which other project files this file imports.
@@ -1142,7 +1147,8 @@ class TreeBuilder:
             stem = _Path(npath).stem
             stem_map[stem] = path
 
-        supported_exts = (".py", ".js", ".mjs", ".ts", ".tsx", ".go")
+        supported_exts = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go")
+        aliases = aliases or {}
 
         current_norm = _norm(current_path) if current_path else None
         current_dir = _Path(current_norm).parent.as_posix() if current_norm else ""
@@ -1158,6 +1164,15 @@ class TreeBuilder:
                 rel = os.path.normpath(os.path.join(current_dir, module_spec)).replace("\\", "/")
                 base_candidates.append(rel)
             else:
+                # Alias rewrite (tsconfig/vite): '@/x' -> 'src/x'
+                aliased = module_spec
+                for alias, target in sorted(aliases.items(), key=lambda kv: -len(kv[0])):
+                    if module_spec == alias or module_spec.startswith(alias + "/"):
+                        suffix = module_spec[len(alias):].lstrip("/")
+                        aliased = f"{target.rstrip('/')}/{suffix}" if suffix else target.rstrip("/")
+                        break
+                if aliased != module_spec:
+                    base_candidates.append(aliased)
                 base_candidates.append(module_spec)
                 base_candidates.append(module_spec.replace(".", "/"))
 
@@ -1196,13 +1211,19 @@ class TreeBuilder:
                     # Python style: from pkg.module import x
                     module = parts[1]
             elif imp.startswith("import "):
-                rest = imp[7:]  # strip "import "
-                # Python: import a.b as c / import a, b
-                module = rest.split(" as ")[0].split(",")[0].strip()
+                # Python-style only (exclude JS/TS forms like: import x from '...').
+                if " from " not in imp and "'" not in imp and '"' not in imp:
+                    rest = imp[7:]  # strip "import "
+                    # Python: import a.b as c / import a, b
+                    module = rest.split(" as ")[0].split(",")[0].strip()
 
             # JS/TS style imports and requires.
             if not module:
-                m = re.search(r"from\s+['\"]([^'\"]+)['\"]", imp)
+                m = re.search(r"export\s+.*?from\s+['\"]([^'\"]+)['\"]", imp)
+                if not m:
+                    m = re.search(r"export\s*\{[^}]*\}\s*from\s+['\"]([^'\"]+)['\"]", imp)
+                if not m:
+                    m = re.search(r"from\s+['\"]([^'\"]+)['\"]", imp)
                 if not m:
                     m = re.search(r"import\s+['\"]([^'\"]+)['\"]", imp)
                 if not m:
@@ -1216,6 +1237,64 @@ class TreeBuilder:
                 seen_paths.add(resolved)
 
         return connections
+
+    def _load_module_aliases(self, root_path: str) -> Dict[str, str]:
+        """Load module aliases from tsconfig.json and vite.config.ts/js when present."""
+        aliases: Dict[str, str] = {}
+        root = Path(root_path)
+
+        def norm_rel(path_str: str) -> str:
+            path_str = path_str.replace("\\", "/").strip()
+            path_str = path_str.strip('"\'')
+            path_str = path_str.replace("./", "")
+            return path_str.rstrip("/")
+
+        # tsconfig paths
+        tsconfig = root / "tsconfig.json"
+        if tsconfig.exists():
+            try:
+                raw = tsconfig.read_text(encoding="utf-8", errors="ignore")
+                raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.S)
+                raw = re.sub(r"(^|\s)//.*", "", raw)
+                data = json.loads(raw)
+                compiler = data.get("compilerOptions", {})
+                base_url = norm_rel(str(compiler.get("baseUrl", "")))
+                for key, targets in compiler.get("paths", {}).items():
+                    if not targets:
+                        continue
+                    alias_key = key.replace("/*", "").rstrip("/")
+                    target = str(targets[0]).replace("/*", "")
+                    target = norm_rel(target)
+                    if base_url and not target.startswith(base_url):
+                        target = f"{base_url}/{target}".strip("/")
+                    aliases[alias_key] = target.strip("/")
+            except Exception:
+                pass
+
+        # vite alias (best-effort regex)
+        for vite_name in ("vite.config.ts", "vite.config.js"):
+            vite_cfg = root / vite_name
+            if not vite_cfg.exists():
+                continue
+            try:
+                raw = vite_cfg.read_text(encoding="utf-8", errors="ignore")
+                # Object style: '@': '/src' or '@': './src'
+                for m in re.finditer(r"['\"](@[^'\"]*)['\"]\s*:\s*['\"]([^'\"]+)['\"]", raw):
+                    aliases[m.group(1)] = norm_rel(m.group(2))
+                # Array style: { find: '@', replacement: '/src' }
+                for m in re.finditer(r"find\s*:\s*['\"](@[^'\"]*)['\"].*?replacement\s*:\s*['\"]([^'\"]+)['\"]", raw, flags=re.S):
+                    aliases[m.group(1)] = norm_rel(m.group(2))
+                # path.resolve(__dirname, './src')
+                for m in re.finditer(r"find\s*:\s*['\"](@[^'\"]*)['\"].*?replacement\s*:\s*path\.resolve\(__dirname,\s*['\"]([^'\"]+)['\"]\)", raw, flags=re.S):
+                    aliases[m.group(1)] = norm_rel(m.group(2))
+            except Exception:
+                pass
+
+        # Safe defaults for common setups.
+        if "@" not in aliases and (root / "src").exists():
+            aliases["@"] = "src"
+
+        return aliases
 
     def save(self, tree: CodebaseTree, output_path: str):
         """Save tree to JSON file for persistence."""
