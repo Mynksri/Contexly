@@ -239,6 +239,14 @@ See full setup examples in [MCP_SETUP.md](MCP_SETUP.md) and [mcp.example.json](m
 - [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md): documentation navigation
 - [MCP_SETUP.md](MCP_SETUP.md): client integration setup
 
+## Known Limitations
+
+- React/TSX extraction is much better now, but highly dynamic component patterns can still produce partial skeletons.
+- Import connection quality depends on resolver hints (`tsconfig.json` paths, Vite aliases, re-export patterns).
+- If output looks stale or unexpectedly thin, use `--rebuild` to bypass cache and regenerate context.
+
+If you hit a bad case, open an issue with a minimal repro project. That helps improve parser coverage quickly.
+
 ## Roadmap
 
 - v0.2.0 - VS Code extension (interactive context + impact in editor)
