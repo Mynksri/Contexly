@@ -57,7 +57,7 @@ def main():
             exclude_roles=exclude_roles,
         )
     elif cmd == "impact":
-        i_path, function_name, file_hint, depth, include_dataflow = _parse_impact_args(args[1:])
+        i_path, function_name, file_hint, depth, include_dataflow, show_paths = _parse_impact_args(args[1:])
         cmd_impact(
             i_path,
             function_name,
@@ -65,6 +65,7 @@ def main():
             rebuild=rebuild,
             depth=depth,
             include_dataflow=include_dataflow,
+            show_paths=show_paths,
         )
     elif cmd == "session":
         cmd_session(args[1:])
@@ -167,10 +168,11 @@ def _parse_query_args(args: List[str]) -> Tuple[str, str, int, int, bool, Set[st
     return path, query_str, depth, level, debug, exclude_roles
 
 
-def _parse_impact_args(args: List[str]) -> Tuple[str, str, Optional[str], int, bool]:
+def _parse_impact_args(args: List[str]) -> Tuple[str, str, Optional[str], int, bool, bool]:
     path = "."
     depth = 2
     include_dataflow = False
+    show_paths = False
 
     rest = list(args)
     if rest and _is_probable_path(rest[0]) and not rest[0].startswith("--"):
@@ -191,6 +193,10 @@ def _parse_impact_args(args: List[str]) -> Tuple[str, str, Optional[str], int, b
             include_dataflow = True
             i += 1
             continue
+        if arg == "--show-paths":
+            show_paths = True
+            i += 1
+            continue
         if arg.startswith("--"):
             i += 1
             continue
@@ -200,7 +206,7 @@ def _parse_impact_args(args: List[str]) -> Tuple[str, str, Optional[str], int, b
     function_name = positional[0] if positional else ""
     file_hint = positional[1] if len(positional) > 1 else None
     depth = max(1, min(depth, 5))
-    return path, function_name, file_hint, depth, include_dataflow
+    return path, function_name, file_hint, depth, include_dataflow, show_paths
 
 
 def cmd_tree(path: str, min_score: float = 0.0):
@@ -429,16 +435,19 @@ def cmd_impact(
     rebuild: bool = False,
     depth: int = 2,
     include_dataflow: bool = False,
+    show_paths: bool = False,
 ):
     """
     Show impact preview before editing a function.
     Lists all callers detected via call_graph + skeleton references.
+    Flags: --depth N, --dataflow, --show-paths
     """
     from contexly.core.tree_builder import TreeBuilder
 
     if not function_name:
         print("Usage: contexly impact <path> <function_name> [file_hint]")
         print("Example: contexly impact . execute_trade trade_executor")
+        print("Flags: --depth 3 --dataflow --show-paths")
         return
 
     builder = TreeBuilder()
@@ -459,6 +468,7 @@ def cmd_impact(
         file_hint,
         depth=depth,
         include_dataflow=include_dataflow,
+        show_paths=show_paths,
     )
     print(result)
 

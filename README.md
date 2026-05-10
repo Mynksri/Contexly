@@ -6,7 +6,7 @@
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Tests](https://img.shields.io/badge/tests-72%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-79%20passed-brightgreen)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
 Contexly extracts the logic skeleton of your codebase: function signatures,
@@ -197,6 +197,31 @@ contexly query . "auth flow" 2 1 --debug
 ### `contexly impact <path> <function_name> [file_hint]`
 
 Preview downstream impact before editing a function.
+Shows direct callers, indirect impact chain, dataflow dependencies, and side effects.
+
+Flags:
+- `--depth N` — traverse up to N hops in call graph (default: 2, max: 5)
+- `--dataflow` — include data flow analysis (configs, state, side effects)
+- `--show-paths` — display complete call paths from entry points to target function
+- `--exclude <role>` — skip files by role (e.g., `--exclude legacy`)
+
+Examples:
+
+```bash
+# Basic impact analysis
+contexly impact . run_coin_round
+
+# Deep analysis with dataflow
+contexly impact . execute_trade --depth 3 --dataflow
+
+# Show complete call paths and side effects
+contexly impact . process_payment --depth 3 --dataflow --show-paths
+
+# Exclude legacy code from analysis
+contexly impact . handle_request --depth 2 --exclude legacy
+```
+
+See [IMPACT_ANALYSIS.md](IMPACT_ANALYSIS.md) for detailed workflow guide.
 
 ### `contexly status <path>`
 

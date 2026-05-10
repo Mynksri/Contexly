@@ -899,6 +899,7 @@ class TreeBuilder:
         file_hint: Optional[str] = None,
         depth: int = 2,
         include_dataflow: bool = False,
+        show_paths: bool = False,
     ) -> str:
         """
         Impact preview before editing a function.
@@ -924,8 +925,35 @@ class TreeBuilder:
             lines.append(f"  Defined in: {file_hint}")
 
         if caller_lines:
-            lines.append(f"  Direct callers ({len(caller_lines)}):")
-            lines.extend(caller_lines[:16])
+            # Separate same-file and cross-file callers for better clarity
+            cross_file_callers = []
+            same_file_callers = []
+            
+            # Extract file info from caller_meta
+            for line in caller_lines:
+                # Try to detect if it's a cross-file call
+                is_cross_file = False
+                for meta in caller_meta:
+                    if meta.get("caller_symbol", "") in line:
+                        caller_file = meta.get("caller_file", "")
+                        if caller_file and file_hint and file_hint.lower() not in caller_file.lower():
+                            is_cross_file = True
+                        break
+                
+                if is_cross_file:
+                    cross_file_callers.append(line)
+                else:
+                    same_file_callers.append(line)
+            
+            # Display cross-file callers first (more important)
+            if cross_file_callers:
+                lines.append(f"  Direct callers ({len(caller_lines)}) - Cross-file:")
+                lines.extend(cross_file_callers[:8])
+            
+            if same_file_callers:
+                label = "Same-file:" if cross_file_callers else f"({len(caller_lines)}):"
+                lines.append(f"  Direct callers {label}")
+                lines.extend(same_file_callers[:8])
         else:
             lines.append("  Direct callers: none detected in current index")
 
@@ -959,15 +987,64 @@ class TreeBuilder:
             else:
                 lines.append("  - No explicit side effects detected")
 
-        high_impact = sum(1 for m in caller_meta if m.get("confidence") == "HIGH")
-        files_affected = len(set(impacted_files.keys()).union(direct_files))
+        if show_paths:
+            call_paths = self._build_call_paths(tree, fn_lower, file_hint, depth=depth)
+            lines.append("")
+            lines.append("  Call paths to this function:")
+            if call_paths:
+                for i, path in enumerate(call_paths[:8], 1):
+                    lines.append(f"    {i}. {path}")
+            else:
+                lines.append("    No call paths found")
+
+        # Calculate high impact from side effects if available
+        high_impact_files = set()
+        risk_domains = set()  # Track what's at risk
+        
+        if include_dataflow:
+            sidefx = self._detect_side_effects(tree, fn_lower, file_hint)
+            for sfx in sidefx:
+                if "(HIGH)" in sfx:
+                    # Extract file name from side effects line
+                    file_part = sfx.split(":")[0].strip()
+                    high_impact_files.add(file_part)
+                    
+                    # Extract domain context
+                    if "blockchain" in sfx.lower():
+                        risk_domains.add("Blockchain")
+                    if "telegram" in sfx.lower() or "notif" in sfx.lower():
+                        risk_domains.add("Notifications")
+                    if "api" in sfx.lower():
+                        risk_domains.add("API/External Services")
+                    if "trade" in sfx.lower() or "round" in function_name.lower():
+                        risk_domains.add("Trading")
+            
+            high_impact = len(high_impact_files)
+        else:
+            high_impact = sum(1 for m in caller_meta if m.get("confidence") == "HIGH")
+        
+        # Files affected = direct + indirect files
+        all_affected = set(direct_files).union(set(impacted_files.keys()))
+        files_affected = len(all_affected)
+        
+        # Potential breaks = all affected files
+        potential_breaks = files_affected
+
         lines.append("")
-        lines.append(
-            f"Summary: {files_affected} files affected | {high_impact} high impact | {potential_breaks} potential breaks"
-        )
+        
+        # Build intelligent summary with context
+        if risk_domains:
+            domain_str = " + ".join(sorted(risk_domains))
+            summary_line = f"Summary: {files_affected} files | {high_impact} \033[92mHIGH IMPACT\033[0m | {domain_str} at \033[92mrisk\033[0m"
+            risk_msg = f"[!] \033[92mHIGH RISK\033[0m: Changing \033[94m{function_name}\033[0m() can break {domain_str.lower()}."
+        else:
+            summary_line = f"Summary: {files_affected} files affected | {high_impact} high impact | {potential_breaks} potential breaks"
+            risk_msg = f"[!] Changing \033[94m{function_name}\033[0m() may break downstream behavior."
+        
+        lines.append(summary_line)
 
         if potential_breaks > 0:
-            lines.append(f"⚠  Changing {function_name}() may break downstream behavior.")
+            lines.append(risk_msg)
         else:
             lines.append("No callers found in index; likely low-risk signature change.")
 
@@ -1154,6 +1231,95 @@ class TreeBuilder:
                 effects.append(f"{Path(path).name}: {', '.join(matched)} ({conf})")
 
         return effects
+
+    def _build_call_paths(
+        self,
+        tree: CodebaseTree,
+        target_function: str,
+        file_hint: Optional[str],
+        depth: int = 2,
+    ) -> List[str]:
+        """Build complete call chains to the target function from entry points.
+        
+        Returns list of call paths like: "main.py:main() -> round_manager.py:run_round() -> run_coin_round()"
+        """
+        paths = []
+        visited_chains = set()
+        
+        # Get direct callers
+        caller_lines, caller_meta = self._collect_direct_callers(tree, target_function, file_hint)
+        
+        if not caller_meta:
+            return paths
+        
+        # Determine target file from file_hint or first caller's file
+        if file_hint:
+            target_file = Path(file_hint).name
+        else:
+            # Try to find the target file from caller files - usually all callers are in same file
+            target_files = {Path(meta["caller_file"]).name for meta in caller_meta if meta.get("caller_file")}
+            target_file = list(target_files)[0] if target_files else "unknown"
+        
+        # For each direct caller, trace back to entry points
+        for meta in caller_meta[:4]:  # Limit to top 4 callers
+            caller_file = meta.get("caller_file", "").strip()
+            caller_func = meta.get("caller_symbol", "").strip()
+            if not caller_func:
+                continue
+            
+            file_name = Path(caller_file).name if caller_file else "unknown"
+            
+            # Find who calls this caller
+            parents = self._find_caller_chain(tree, caller_func, max_depth=2)
+            
+            # Build chains from parents
+            if parents:
+                for parent_chain in parents[:2]:
+                    # parent_chain format: "file.py:func()"
+                    full_chain = f"{parent_chain} -> {file_name}:{caller_func}() -> {target_file}:{target_function}()"
+                    if full_chain not in visited_chains:
+                        visited_chains.add(full_chain)
+                        paths.append(full_chain)
+            else:
+                # No parent found, direct call
+                chain = f"{file_name}:{caller_func}() -> {target_file}:{target_function}()"
+                if chain not in visited_chains:
+                    visited_chains.add(chain)
+                    paths.append(chain)
+        
+        return paths
+
+    def _find_caller_chain(self, tree: CodebaseTree, func_name: str, max_depth: int = 2) -> List[str]:
+        """Find caller chains for a function."""
+        chains = []
+        func_lower = func_name.lower().strip()
+        
+        # Look in call_graph for who calls this function
+        direct_callers = []
+        for entry in tree.call_graph:
+            if " -> " not in entry:
+                continue
+            src, targets_str = entry.split(" -> ", 1)
+            src_stem, _, src_func = src.partition(".")
+            
+            for target in targets_str.split(", "):
+                t_stem, _, t_func = target.partition(".")
+                if t_func.lower() == func_lower:
+                    # Find full path for src_stem
+                    src_path = self._resolve_tree_file_by_stem(tree, src_stem)
+                    if src_path:
+                        src_file = Path(src_path).name
+                        direct_callers.append((src_file, src_func))
+        
+        if not direct_callers:
+            return []
+        
+        # Return first direct caller as chain starter
+        src_file, src_func = direct_callers[0]
+        chain = f"{src_file}:{src_func}()"
+        chains.append(chain)
+        
+        return chains
 
     def _resolve_tree_file_by_stem(self, tree: CodebaseTree, stem: str) -> str:
         for path in tree.nodes:
