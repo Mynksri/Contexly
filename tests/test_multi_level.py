@@ -42,6 +42,24 @@ def _make_tree(tmp_dir: str) -> "CodebaseTree":
     return builder.build(tmp_dir, exclude_roles=[])
 
 
+def _make_ts_tree(tmp_dir: str) -> "CodebaseTree":
+    """Build a small TS tree to verify relative import resolution."""
+    (Path(tmp_dir) / "main.ts").write_text(
+        "import { helper } from './utils/helper'\n\n"
+        "export function run(): number {\n"
+        "    return helper()\n"
+        "}\n"
+    )
+    os.makedirs(Path(tmp_dir) / "utils", exist_ok=True)
+    (Path(tmp_dir) / "utils" / "helper.ts").write_text(
+        "export function helper(): number {\n"
+        "    return 1\n"
+        "}\n"
+    )
+    builder = TreeBuilder()
+    return builder.build(tmp_dir)
+
+
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #  Level 0 â€” Repo Map
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -80,6 +98,24 @@ class TestRepoMap:
         map_text = builder.to_repo_map(tree)
         full_text = builder.to_ai_text(tree, level=2)
         assert len(map_text) < len(full_text)
+
+
+class TestBuildRegressions:
+    def test_default_build_keeps_script_or_orphan_files(self, tmp_path):
+        (tmp_path / "standalone.js").write_text("console.log('ok')\n")
+        builder = TreeBuilder()
+        tree = builder.build(str(tmp_path))
+        assert tree.file_count >= 1
+        assert any(p.endswith("standalone.js") for p in tree.nodes)
+
+    def test_ts_relative_import_connections_resolve(self, tmp_path):
+        tree = _make_ts_tree(str(tmp_path))
+        assert tree.file_count >= 2
+
+        main_path = next(p for p in tree.nodes if p.endswith("main.ts"))
+        helper_path = next(p for p in tree.nodes if p.endswith("helper.ts"))
+
+        assert helper_path in tree.nodes[main_path].connections
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

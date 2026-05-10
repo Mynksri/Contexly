@@ -103,7 +103,9 @@ class TreeBuilder:
     ) -> CodebaseTree:
         """Build complete tree from a directory."""
         if exclude_roles is None:
-            exclude_roles = ["SCRIPT", "ORPHAN"]
+            # Keep all discovered files by default.
+            # Excluding ORPHAN/SCRIPT globally can collapse some JS/TS repos to 0 files.
+            exclude_roles = []
         skeletons = self.extractor.extract_directory(
             root_path,
             exclude_dirs=exclude_dirs,
@@ -119,7 +121,7 @@ class TreeBuilder:
             total_tokens += tokens
 
             connections = self._find_connections(
-                skeleton.imports, list(skeletons.keys())
+                skeleton.imports, list(skeletons.keys()), current_path=filepath
             )
 
             # Compute line range
@@ -1116,22 +1118,73 @@ class TreeBuilder:
         self,
         imports: List[str],
         all_paths: List[str],
+        current_path: Optional[str] = None,
     ) -> List[str]:
         """
         Find which other project files this file imports.
-        Uses EXACT stem matching to avoid false positives like
-        'time' matching 'timeline_analysis.py' or 'price_monitor'
-        matching 'btc_price_monitor.py'.
+
+        Supports:
+        - Python imports: from x import y / import x
+        - JS/TS imports: import ... from "...", import "...", require("...")
+        - Relative module paths: ./foo, ../bar/baz
         """
         from pathlib import Path as _Path
-        # Build stem â†’ path map (e.g. "price_monitor" â†’ "price_monitor.py")
+
+        def _norm(path: str) -> str:
+            return path.replace("\\", "/")
+
+        # Build normalized path indexes for exact/suffix matching.
+        norm_to_orig: Dict[str, str] = {}
         stem_map: Dict[str, str] = {}
         for path in all_paths:
-            stem = _Path(path).stem
+            npath = _norm(path)
+            norm_to_orig[npath] = path
+            stem = _Path(npath).stem
             stem_map[stem] = path
 
+        supported_exts = (".py", ".js", ".mjs", ".ts", ".tsx", ".go")
+
+        current_norm = _norm(current_path) if current_path else None
+        current_dir = _Path(current_norm).parent.as_posix() if current_norm else ""
+
+        def _resolve_module(module_spec: str) -> Optional[str]:
+            module_spec = module_spec.strip().strip(";\"").strip("'")
+            if not module_spec:
+                return None
+
+            base_candidates: List[str] = []
+
+            if module_spec.startswith(".") and current_dir:
+                rel = os.path.normpath(os.path.join(current_dir, module_spec)).replace("\\", "/")
+                base_candidates.append(rel)
+            else:
+                base_candidates.append(module_spec)
+                base_candidates.append(module_spec.replace(".", "/"))
+
+            # Prefer exact/relative file resolution.
+            for base in base_candidates:
+                path_candidates = [base]
+                if not base.endswith(supported_exts):
+                    path_candidates.extend([f"{base}{ext}" for ext in supported_exts])
+                    path_candidates.extend([f"{base}/index{ext}" for ext in supported_exts])
+
+                for cand in path_candidates:
+                    cand_norm = _norm(cand)
+                    if cand_norm in norm_to_orig:
+                        return norm_to_orig[cand_norm]
+                    for npath, orig in norm_to_orig.items():
+                        if npath.endswith(f"/{cand_norm}"):
+                            return orig
+
+            # Fallback: exact stem match (legacy behavior).
+            leaf = module_spec.replace(".", "/").split("/")[-1]
+            if leaf in stem_map:
+                return stem_map[leaf]
+
+            return None
+
         connections = []
-        seen: Set[str] = set()
+        seen_paths: Set[str] = set()
 
         for imp in imports:
             imp = imp.strip()
@@ -1140,17 +1193,27 @@ class TreeBuilder:
             if imp.startswith("from "):
                 parts = imp.split()
                 if len(parts) >= 2:
-                    # e.g. "from config import X" â†’ "config"
-                    # "from telegram_notifier as tg" â†’ "telegram_notifier"
-                    module = parts[1].split(".")[0]  # first component only
+                    # Python style: from pkg.module import x
+                    module = parts[1]
             elif imp.startswith("import "):
                 rest = imp[7:]  # strip "import "
-                # e.g. "import config" or "import telegram_notifier as tg"
-                module = rest.split(" as ")[0].split(".")[0].split(",")[0].strip()
+                # Python: import a.b as c / import a, b
+                module = rest.split(" as ")[0].split(",")[0].strip()
 
-            if module and module in stem_map and module not in seen:
-                connections.append(stem_map[module])
-                seen.add(module)
+            # JS/TS style imports and requires.
+            if not module:
+                m = re.search(r"from\s+['\"]([^'\"]+)['\"]", imp)
+                if not m:
+                    m = re.search(r"import\s+['\"]([^'\"]+)['\"]", imp)
+                if not m:
+                    m = re.search(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)", imp)
+                if m:
+                    module = m.group(1)
+
+            resolved = _resolve_module(module) if module else None
+            if resolved and resolved not in seen_paths:
+                connections.append(resolved)
+                seen_paths.add(resolved)
 
         return connections
 
