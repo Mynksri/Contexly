@@ -9,7 +9,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, asdict, field
 from contexly.core.extractor import SkeletonExtractor, FileSkeleton
 
@@ -682,6 +682,7 @@ class TreeBuilder:
         tree: CodebaseTree,
         query: str,
         top_k: int = 5,
+        exclude_roles: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search index with keyword + function-name + tag matching.
@@ -708,7 +709,11 @@ class TreeBuilder:
 
         results: List[Dict[str, Any]] = []
 
+        blocked_roles = {r.upper() for r in (exclude_roles or set())}
+
         for path, node in tree.nodes.items():
+            if (node.role or "").upper() in blocked_roles:
+                continue
             score = 0.0
             matched_functions: List[str] = []
             matched_tags: List[str] = []
@@ -892,6 +897,8 @@ class TreeBuilder:
         tree: CodebaseTree,
         function_name: str,
         file_hint: Optional[str] = None,
+        depth: int = 2,
+        include_dataflow: bool = False,
     ) -> str:
         """
         Impact preview before editing a function.
@@ -900,64 +907,265 @@ class TreeBuilder:
         function_name â€” exact name, e.g. 'execute_trade'
         file_hint     â€” optional file stem to narrow down (e.g. 'trade_executor')
         """
-        fn_lower = function_name.lower()
-        callers: List[str] = []
-        seen: Set[str] = set()
+        fn_lower = function_name.lower().strip()
+        depth = max(1, min(depth, 5))
 
-        # Walk call_graph entries: "A.func -> B.func1, C.func2"
-        for entry in tree.call_graph:
-            if " -> " not in entry:
-                continue
-            src, targets_str = entry.split(" -> ", 1)
-            for target in targets_str.split(", "):
-                t_stem, _, t_func = target.partition(".")
-                if t_func.lower() == fn_lower:
-                    src_stem, _, src_func = src.partition(".")
-                    if file_hint is None or file_hint.lower() in t_stem.lower():
-                        line_range = self._lookup_symbol_line_range(tree, f"{src_stem}.py", src_func)
-                        suffix = f" [L{line_range}]" if line_range else ""
-                        label = f"  {src_stem}.py -> {src_func}(){suffix} calls {target}"
-                        if label not in seen:
-                            callers.append(label)
-                            seen.add(label)
+        caller_lines, caller_meta = self._collect_direct_callers(tree, fn_lower, file_hint)
+        impacted_files = self._expand_indirect_file_impact(tree, caller_meta, depth=depth)
 
-        # Reverse caller map from skeleton call lines for better coverage.
-        reverse_calls = self._build_reverse_call_graph(tree)
-        for caller in reverse_calls.get(fn_lower, []):
-            if caller not in seen:
-                callers.append(caller)
-                seen.add(caller)
+        direct_files = {meta["caller_file"] for meta in caller_meta}
+        indirect_files = [p for p, hop in impacted_files.items() if hop >= 2]
 
-        # Also scan skeleton_text for direct references to the function name
-        text_callers: List[str] = []
-        for path, node in tree.nodes.items():
-            if fn_lower in node.skeleton_text.lower():
-                # Don't double-count already found via call_graph
-                fname = Path(path).name
-                if not any(fname.split(".")[0] in c for c in callers):
-                    suffix = f" [L{node.line_range}]" if getattr(node, "line_range", "") else ""
-                    label = f"  {fname}{suffix} (mentioned in skeleton)"
-                    if label not in seen:
-                        text_callers.append(label)
-                        seen.add(label)
-
-        all_callers = callers + text_callers
+        # Potential breaks = unique direct callers + transitive impacted files.
+        potential_breaks = len(direct_files) + len(indirect_files)
 
         lines = [f"IMPACT PREVIEW: {function_name}()"]
         if file_hint:
             lines.append(f"  Defined in: {file_hint}")
 
-        if all_callers:
-            lines.append(f"  Called by ({len(all_callers)} location(s)):")
-            lines.extend(all_callers[:12])
-            lines.append("")
-            lines.append(
-                f"  âš ï¸  Changing {function_name}() signature may break {len(all_callers)} caller(s)."
-            )
+        if caller_lines:
+            lines.append(f"  Direct callers ({len(caller_lines)}):")
+            lines.extend(caller_lines[:16])
         else:
-            lines.append(f"  No callers found in index â€” safe to modify signature.")
+            lines.append("  Direct callers: none detected in current index")
+
+        lines.append("")
+        lines.append(f"  Indirect callers (up to {depth} hops):")
+        if indirect_files:
+            for path in sorted(indirect_files)[:16]:
+                hops = impacted_files[path]
+                conf = "MED" if hops <= 3 else "LOW"
+                lines.append(f"  - {Path(path).name} ({hops} hops, {conf})")
+        else:
+            lines.append("  - none")
+
+        if include_dataflow:
+            dataflow = self._build_dataflow_summary(tree, fn_lower, file_hint)
+            sidefx = self._detect_side_effects(tree, fn_lower, file_hint)
+
+            lines.append("")
+            lines.append("  Data flow:")
+            if dataflow:
+                for row in dataflow[:12]:
+                    lines.append(f"  - {row}")
+            else:
+                lines.append("  - No strong dataflow hints found")
+
+            lines.append("")
+            lines.append("  Side effects:")
+            if sidefx:
+                for row in sidefx:
+                    lines.append(f"  - {row}")
+            else:
+                lines.append("  - No explicit side effects detected")
+
+        high_impact = sum(1 for m in caller_meta if m.get("confidence") == "HIGH")
+        files_affected = len(set(impacted_files.keys()).union(direct_files))
+        lines.append("")
+        lines.append(
+            f"Summary: {files_affected} files affected | {high_impact} high impact | {potential_breaks} potential breaks"
+        )
+
+        if potential_breaks > 0:
+            lines.append(f"⚠  Changing {function_name}() may break downstream behavior.")
+        else:
+            lines.append("No callers found in index; likely low-risk signature change.")
 
         return "\n".join(lines)
+
+    def _collect_direct_callers(
+        self,
+        tree: CodebaseTree,
+        function_lower: str,
+        file_hint: Optional[str],
+    ) -> Tuple[List[str], List[Dict[str, str]]]:
+        caller_lines: List[str] = []
+        caller_meta: List[Dict[str, str]] = []
+        seen: Set[str] = set()
+
+        # High confidence: from call_graph edges.
+        for entry in tree.call_graph:
+            if " -> " not in entry:
+                continue
+            src, targets_str = entry.split(" -> ", 1)
+            src_stem, _, src_func = src.partition(".")
+            for target in targets_str.split(", "):
+                t_stem, _, t_func = target.partition(".")
+                if t_func.lower() != function_lower:
+                    continue
+                if file_hint and file_hint.lower() not in t_stem.lower():
+                    continue
+
+                src_path = self._resolve_tree_file_by_stem(tree, src_stem)
+                if not src_path:
+                    continue
+                line_range = self._lookup_symbol_line_range(tree, src_path, src_func)
+                suffix = f" [L{line_range}]" if line_range else ""
+                key = f"{src_path}:{src_func}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                caller_lines.append(
+                    f"  - {Path(src_path).name} -> {src_func}(){suffix} [HIGH]"
+                )
+                caller_meta.append(
+                    {
+                        "caller_file": src_path,
+                        "caller_symbol": src_func,
+                        "confidence": "HIGH",
+                    }
+                )
+
+        # Medium confidence: reverse call lines from skeleton text.
+        reverse_calls = self._build_reverse_call_graph(tree)
+        for label in reverse_calls.get(function_lower, []):
+            clean = label.strip()
+            # format: file.py -> symbol() [Lx-y]
+            if "->" in clean:
+                left, right = [p.strip() for p in clean.split("->", 1)]
+                file_name = left
+                symbol = right.split("(", 1)[0].strip()
+            else:
+                file_name = clean.split()[0]
+                symbol = "callsite"
+
+            src_path = self._resolve_tree_file_by_name(tree, file_name)
+            if not src_path:
+                continue
+            if file_hint and file_hint.lower() not in file_name.lower():
+                # file_hint points to callee file, not caller; keep this row.
+                pass
+            key = f"{src_path}:{symbol}"
+            if key in seen:
+                continue
+            seen.add(key)
+            caller_lines.append(f"  - {Path(src_path).name} -> {symbol}() [MED]")
+            caller_meta.append(
+                {
+                    "caller_file": src_path,
+                    "caller_symbol": symbol,
+                    "confidence": "MED",
+                }
+            )
+
+        # Low confidence: mention scan fallback.
+        for path, node in tree.nodes.items():
+            if function_lower not in node.skeleton_text.lower():
+                continue
+            key = f"{path}:mention"
+            if key in seen:
+                continue
+            seen.add(key)
+            caller_lines.append(f"  - {Path(path).name} (symbol mention) [LOW]")
+            caller_meta.append(
+                {
+                    "caller_file": path,
+                    "caller_symbol": "mention",
+                    "confidence": "LOW",
+                }
+            )
+
+        return caller_lines, caller_meta
+
+    def _expand_indirect_file_impact(
+        self,
+        tree: CodebaseTree,
+        caller_meta: List[Dict[str, str]],
+        depth: int,
+    ) -> Dict[str, int]:
+        impacted_hops: Dict[str, int] = {}
+        frontier: Set[str] = {m["caller_file"] for m in caller_meta if m.get("caller_file") in tree.nodes}
+        for src in frontier:
+            impacted_hops[src] = 1
+
+        for hop in range(2, depth + 1):
+            next_frontier: Set[str] = set()
+            for file_path in frontier:
+                node = tree.nodes.get(file_path)
+                if not node:
+                    continue
+                neighbors = set(node.imported_by or []) | set(node.connections or [])
+                for nxt in neighbors:
+                    if nxt not in tree.nodes or nxt in impacted_hops:
+                        continue
+                    impacted_hops[nxt] = hop
+                    next_frontier.add(nxt)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return impacted_hops
+
+    def _build_dataflow_summary(
+        self,
+        tree: CodebaseTree,
+        function_lower: str,
+        file_hint: Optional[str],
+    ) -> List[str]:
+        import re as _re
+
+        rows: List[str] = []
+        for path, node in tree.nodes.items():
+            text = node.skeleton_text
+            if function_lower not in text.lower() and (file_hint and file_hint.lower() not in path.lower()):
+                continue
+
+            configs = _re.findall(r"CONST:([A-Z][A-Z0-9_]{2,})", text)
+            classes = _re.findall(r"CLASS:([A-Za-z_][A-Za-z0-9_]*)", text)
+            state_writes = _re.findall(r"\b(?:state|self)\.([A-Za-z_][A-Za-z0-9_]*)", text)
+
+            parts: List[str] = []
+            if configs:
+                parts.append("configs=" + ",".join(list(dict.fromkeys(configs))[:4]))
+            if classes:
+                parts.append("classes=" + ",".join(list(dict.fromkeys(classes))[:4]))
+            if state_writes:
+                parts.append("state=" + ",".join(list(dict.fromkeys(state_writes))[:6]))
+            if parts:
+                rows.append(f"{Path(path).name}: " + " | ".join(parts))
+
+        return rows
+
+    def _detect_side_effects(
+        self,
+        tree: CodebaseTree,
+        function_lower: str,
+        file_hint: Optional[str],
+    ) -> List[str]:
+        effects: List[str] = []
+        checks = [
+            ("database", ("db.", "sqlite", "postgres", "mysql", "mongodb")),
+            ("api", ("aiohttp", "requests", "httpx", "fetch(", "websocket", "api")),
+            ("telegram", ("telegram", "send_telegram", "notify_")),
+            ("file-write", ("open(", "write(", "json.dump", "Path(", "to_csv")),
+            ("blockchain", ("web3", "contract", "tx", "polygon", "nonce")),
+        ]
+
+        for path, node in tree.nodes.items():
+            text = node.skeleton_text.lower()
+            if function_lower not in text and (file_hint and file_hint.lower() not in path.lower()):
+                continue
+            matched = []
+            for label, needles in checks:
+                if any(n in text for n in needles):
+                    matched.append(label)
+            if matched:
+                conf = "HIGH" if len(matched) >= 2 else "MED"
+                effects.append(f"{Path(path).name}: {', '.join(matched)} ({conf})")
+
+        return effects
+
+    def _resolve_tree_file_by_stem(self, tree: CodebaseTree, stem: str) -> str:
+        for path in tree.nodes:
+            if Path(path).stem == stem:
+                return path
+        return ""
+
+    def _resolve_tree_file_by_name(self, tree: CodebaseTree, name: str) -> str:
+        for path in tree.nodes:
+            if Path(path).name == name:
+                return path
+        return ""
 
     def _build_reverse_call_graph(self, tree: CodebaseTree) -> Dict[str, List[str]]:
         """
@@ -1049,6 +1257,63 @@ class TreeBuilder:
         scored.sort(key=lambda x: -x[2])
         return scored
 
+    def _node_strength_score(self, node: "TreeNode") -> float:
+        """Compute a lightweight strength score used by --min-score tree filtering."""
+        score = 0.0
+        score += min(len(node.main_functions or []), 5) * 0.8
+        score += min(len(node.connections or []), 5) * 0.5
+        score += min(len(node.imported_by or []), 5) * 0.5
+
+        tags = self._compute_tags(node)
+        if "#complex" in tags:
+            score += 1.2
+        if "#state-heavy" in tags:
+            score += 1.0
+        if "#api-call" in tags or "#blockchain" in tags:
+            score += 0.8
+        if node.role in ("ENTRY", "CORE"):
+            score += 0.8
+        return round(score, 2)
+
+    def filter_by_min_score(self, tree: CodebaseTree, min_score: float) -> CodebaseTree:
+        """Return a filtered tree keeping files with score >= min_score."""
+        if min_score <= 0:
+            return tree
+
+        keep_paths = {
+            path
+            for path, node in tree.nodes.items()
+            if self._node_strength_score(node) >= min_score or node.role == "ENTRY"
+        }
+        if not keep_paths:
+            keep_paths = set(tree.entry_files[:1]) or set(list(tree.nodes.keys())[:1])
+
+        filtered_nodes: Dict[str, TreeNode] = {}
+        import copy
+        for path in keep_paths:
+            if path not in tree.nodes:
+                continue
+            n = copy.copy(tree.nodes[path])
+            n.connections = [c for c in n.connections if c in keep_paths]
+            n.imported_by = [i for i in n.imported_by if i in keep_paths]
+            filtered_nodes[path] = n
+
+        return CodebaseTree(
+            root_path=tree.root_path,
+            nodes=filtered_nodes,
+            total_tokens=sum(n.token_estimate for n in filtered_nodes.values()),
+            raw_token_estimate=tree.raw_token_estimate,
+            file_count=len(filtered_nodes),
+            reduction_percent=tree.reduction_percent,
+            entry_files=[p for p in tree.entry_files if p in filtered_nodes],
+            orphan_files=[p for p in tree.orphan_files if p in filtered_nodes],
+            state_summaries=[s for s in tree.state_summaries if s.get("path") in filtered_nodes],
+            project_summary=tree.project_summary,
+            core_strategy=tree.core_strategy,
+            state_management=tree.state_management,
+            call_graph=tree.call_graph,
+        )
+
     def _compute_tags(self, node: "TreeNode") -> List[str]:
         """Derive searchable tags from skeleton content and node metadata."""
         tags: List[str] = []
@@ -1059,12 +1324,26 @@ class TreeBuilder:
             tags.append("#api-call")
         if "rate_limit" in skel or "ratelimit" in skel or "retry" in skel:
             tags.append("#rate-limit")
+        if "clob" in skel:
+            tags.append("#clob")
+        if "polymarket" in skel:
+            tags.append("#polymarket")
+        if "hedge" in skel or "hedging" in skel or "pivot" in skel:
+            tags.append("#hedging")
         if "webhook" in skel:
             tags.append("#webhook")
+        if "telegram" in skel or "send_telegram" in skel or "notify_" in skel:
+            tags.append("#telegram")
         if "state." in skel or "self.state" in skel:
             tags.append("#state-heavy")
         if "web3" in skel or "contract" in skel or "polygon" in skel:
             tags.append("#blockchain")
+        if "class=" in skel or "id=" in skel or "data-" in skel:
+            tags.append("#frontend")
+        if "tailwind" in skel or "bg-" in skel or "text-" in skel or "px-" in skel:
+            tags.append("#tailwind")
+        if "css" in skel or "selector" in skel or "style" in skel:
+            tags.append("#css")
         if "&decisions:" in skel:
             cond_count = skel.count("â€¢ ")
             if cond_count >= 10:
@@ -1075,7 +1354,7 @@ class TreeBuilder:
             tags.append("#legacy")
         if node.warnings:
             tags.append("#has-warnings")
-        return tags
+        return list(dict.fromkeys(tags))
 
     def get_relevant_chunk(
         self,

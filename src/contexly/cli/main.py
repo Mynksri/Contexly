@@ -6,6 +6,7 @@ Commands: init, tree, status, view
 import sys
 import os
 from pathlib import Path
+from typing import List, Optional, Set, Tuple
 
 # Central output folder - all trees saved here, not inside target projects
 CONTEXLY_OUTPUTS_BASE = Path(os.path.expanduser("~")) / ".vscode" / "github-repo-context" / "contexly-outputs"
@@ -35,7 +36,8 @@ def main():
     if cmd == "init":
         cmd_init(path)
     elif cmd == "tree":
-        cmd_tree(path)
+        tree_path, min_score = _parse_tree_args(args[1:])
+        cmd_tree(tree_path, min_score=min_score)
     elif cmd == "view":
         cmd_view(path)
     elif cmd == "status":
@@ -44,17 +46,26 @@ def main():
         level = int(args[2]) if len(args) > 2 else 1
         cmd_index(path, level, rebuild=rebuild)
     elif cmd == "query":
-        query_args = args[2:]
-        debug = "--debug" in query_args
-        positional = [a for a in query_args if a != "--debug"]
-        query_str = positional[0] if len(positional) > 0 else ""
-        depth = int(positional[1]) if len(positional) > 1 else 1
-        level = int(positional[2]) if len(positional) > 2 else 2
-        cmd_query(path, query_str, depth=depth, level=level, debug=debug, rebuild=rebuild)
+        q_path, query_str, depth, level, debug, exclude_roles = _parse_query_args(args[1:])
+        cmd_query(
+            q_path,
+            query_str,
+            depth=depth,
+            level=level,
+            debug=debug,
+            rebuild=rebuild,
+            exclude_roles=exclude_roles,
+        )
     elif cmd == "impact":
-        function_name = args[2] if len(args) > 2 else ""
-        file_hint = args[3] if len(args) > 3 else None
-        cmd_impact(path, function_name, file_hint, rebuild=rebuild)
+        i_path, function_name, file_hint, depth, include_dataflow = _parse_impact_args(args[1:])
+        cmd_impact(
+            i_path,
+            function_name,
+            file_hint,
+            rebuild=rebuild,
+            depth=depth,
+            include_dataflow=include_dataflow,
+        )
     elif cmd == "session":
         cmd_session(args[1:])
     elif cmd in ("-h", "--help", "help"):
@@ -73,7 +84,126 @@ def cmd_init(path: str):
     print(f"Run 'contexly tree {path}' to build the logic tree")
 
 
-def cmd_tree(path: str):
+def _is_probable_path(value: str) -> bool:
+    if value in (".", ".."):
+        return True
+    if Path(value).exists():
+        return True
+    if any(sep in value for sep in ("/", "\\")):
+        return True
+    return value.endswith((".py", ".js", ".mjs", ".ts", ".tsx", ".go", ".html", ".css"))
+
+
+def _parse_tree_args(args: List[str]) -> Tuple[str, float]:
+    path = "."
+    min_score = 0.0
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--min-score" and i + 1 < len(args):
+            try:
+                min_score = float(args[i + 1])
+            except ValueError:
+                min_score = 0.0
+            i += 2
+            continue
+        if not arg.startswith("--") and path == ".":
+            path = arg
+        i += 1
+
+    return path, max(0.0, min_score)
+
+
+def _parse_query_args(args: List[str]) -> Tuple[str, str, int, int, bool, Set[str]]:
+    path = "."
+    debug = False
+    exclude_roles: Set[str] = set()
+    depth = 1
+    level = 2
+
+    rest = list(args)
+    if rest and _is_probable_path(rest[0]) and not rest[0].startswith("--"):
+        path = rest.pop(0)
+
+    query_str = ""
+    positional: List[str] = []
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--debug":
+            debug = True
+            i += 1
+            continue
+        if arg == "--exclude" and i + 1 < len(rest):
+            raw = rest[i + 1]
+            for role in raw.split(","):
+                role = role.strip()
+                if role:
+                    exclude_roles.add(role.upper())
+            i += 2
+            continue
+        if arg.startswith("--"):
+            i += 1
+            continue
+        positional.append(arg)
+        i += 1
+
+    if positional:
+        query_str = positional[0]
+    if len(positional) > 1:
+        try:
+            depth = int(positional[1])
+        except ValueError:
+            depth = 1
+    if len(positional) > 2:
+        try:
+            level = int(positional[2])
+        except ValueError:
+            level = 2
+
+    depth = max(0, min(depth, 5))
+    level = max(0, min(level, 3))
+    return path, query_str, depth, level, debug, exclude_roles
+
+
+def _parse_impact_args(args: List[str]) -> Tuple[str, str, Optional[str], int, bool]:
+    path = "."
+    depth = 2
+    include_dataflow = False
+
+    rest = list(args)
+    if rest and _is_probable_path(rest[0]) and not rest[0].startswith("--"):
+        path = rest.pop(0)
+
+    positional: List[str] = []
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--depth" and i + 1 < len(rest):
+            try:
+                depth = int(rest[i + 1])
+            except ValueError:
+                depth = 2
+            i += 2
+            continue
+        if arg == "--dataflow":
+            include_dataflow = True
+            i += 1
+            continue
+        if arg.startswith("--"):
+            i += 1
+            continue
+        positional.append(arg)
+        i += 1
+
+    function_name = positional[0] if positional else ""
+    file_hint = positional[1] if len(positional) > 1 else None
+    depth = max(1, min(depth, 5))
+    return path, function_name, file_hint, depth, include_dataflow
+
+
+def cmd_tree(path: str, min_score: float = 0.0):
     """Build and display tree stats."""
     from contexly.core.tree_builder import TreeBuilder
     from contexly.ui.tree_renderer import TreeRenderer
@@ -84,6 +214,9 @@ def cmd_tree(path: str):
 
     builder = TreeBuilder()
     tree = builder.build(path)
+    if min_score > 0:
+        tree = builder.filter_by_min_score(tree, min_score=min_score)
+        print(f"   Applied min-score filter: {min_score:.2f}")
 
     # Role summary
     role_counts: dict = {}
@@ -197,7 +330,15 @@ def cmd_index(path: str, level: int = 1, rebuild: bool = False):
     print(f"\n~{tokens} tokens")
 
 
-def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool = False, rebuild: bool = False):
+def cmd_query(
+    path: str,
+    query: str,
+    depth: int = 1,
+    level: int = 2,
+    debug: bool = False,
+    rebuild: bool = False,
+    exclude_roles: Optional[Set[str]] = None,
+):
     """
     Smart search: find relevant files and build a targeted tree.
 
@@ -236,7 +377,7 @@ def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool
 
     # Phase 1: show index search results
     print(f"\nSearching for: '{query}'")
-    scored = builder.search_index(tree, query, top_k=8)
+    scored = builder.search_index(tree, query, top_k=8, exclude_roles=exclude_roles)
     if not scored:
         print("  No matching files found.")
         return
@@ -251,9 +392,10 @@ def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool
             print(f"       role={r.get('role', 'UNKNOWN')} | reason={r.get('reason', '')}")
 
     # Phase 2: build targeted tree
+    skip_legacy = (exclude_roles and "LEGACY" in exclude_roles) or False
     seed_files = [
         r["path"] for r in scored
-        if r["confidence"] in ("HIGH", "MED") and r.get("role") != "LEGACY"
+        if r["confidence"] in ("HIGH", "MED") and (r.get("role") != "LEGACY" or not skip_legacy)
     ]
     if debug:
         legacy_blocked = [r["path"] for r in scored if r.get("role") == "LEGACY"]
@@ -269,7 +411,7 @@ def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool
         seed_files,
         depth=depth,
         level=level,
-        auto_exclude_legacy=True,
+        auto_exclude_legacy=skip_legacy,
     )
     print(targeted)
 
@@ -280,7 +422,14 @@ def cmd_query(path: str, query: str, depth: int = 1, level: int = 2, debug: bool
     print(f"\nSaved: {targeted_file}")
 
 
-def cmd_impact(path: str, function_name: str, file_hint: str = None, rebuild: bool = False):
+def cmd_impact(
+    path: str,
+    function_name: str,
+    file_hint: str = None,
+    rebuild: bool = False,
+    depth: int = 2,
+    include_dataflow: bool = False,
+):
     """
     Show impact preview before editing a function.
     Lists all callers detected via call_graph + skeleton references.
@@ -304,7 +453,13 @@ def cmd_impact(path: str, function_name: str, file_hint: str = None, rebuild: bo
         tree = builder.build(path)
         builder.save(tree, str(tree_file))
 
-    result = builder.get_impact_preview(tree, function_name, file_hint)
+    result = builder.get_impact_preview(
+        tree,
+        function_name,
+        file_hint,
+        depth=depth,
+        include_dataflow=include_dataflow,
+    )
     print(result)
 
 
@@ -382,10 +537,10 @@ Contexly - Codebase Context Engine
 USAGE:
     contexly [--rebuild] <command> [args]        Force fresh tree build (skip cache)
     contexly init [path]                         Initialize Contexly for a project
-    contexly tree [path]                         Build full logic skeleton tree
+    contexly tree [path] [--min-score N]         Build full logic skeleton tree
     contexly index [path] [level]                Lightweight index (level 0=map, 1=skeletons)
-        contexly query [path] "<query>" [depth] [level] [--debug]  Smart search + targeted tree
-    contexly impact [path] <func> [file_hint]    Show callers before editing a function
+        contexly query [path] "<query>" [depth] [level] [--debug] [--exclude roles]  Smart search + targeted tree
+    contexly impact [path] <func> [file_hint] [--depth N] [--dataflow]  Impact preview
         contexly session new [path] "<task>"         Start/update markdown session tracker
         contexly session done [path] "<summary>"     Mark completed work in session.md
         contexly session todo [path] "<item>"        Add todo item in session.md
@@ -402,12 +557,14 @@ LEVELS:
 EXAMPLES:
     contexly --rebuild index . 0                 # force fresh tree then map
     contexly --rebuild query . "auth flow" 2 2  # force fresh tree then targeted query
+    contexly tree . --min-score 2.0              # keep only stronger files in tree output
     contexly index . 0                           # ultra-lightweight repo map
     contexly index . 1                           # file skeletons with tags
         contexly query . "fix rate limiting" 1 2     # search + targeted depth-1 skeleton
+        contexly query . "fix rate limiting" 1 2 --exclude legacy  # skip legacy during search/expansion
         contexly query . "fix rate limiting" 1 2 --debug  # print ranking reasons
     contexly query . "balance calculation" 0 1   # search + depth-0 index output
-    contexly impact . execute_trade              # who calls execute_trade?
+    contexly impact . execute_trade --depth 3 --dataflow  # callers + flow + side effects
         contexly session new . "Fix Polymarket bot"
         contexly session done . "balance_manager.py fixed - line 47"
         contexly session todo . "Fix trade executor"

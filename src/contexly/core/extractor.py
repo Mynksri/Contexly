@@ -300,6 +300,9 @@ class SkeletonExtractor:
                 add_function(recovered)
 
         constants = self._extract_constants(root, lines, config)
+        if config.name in ("javascript", "typescript"):
+            constants.extend(self._extract_frontend_signals(source, mode="script"))
+            constants = list(dict.fromkeys(constants))[:30]
         has_main_guard = self._has_main_guard(source)
         is_entry_point = self._is_entry_point(source, functions)
 
@@ -1291,10 +1294,82 @@ class SkeletonExtractor:
         imports = []
         functions = []
 
+        if config.name == "html":
+            imports = self._extract_html_imports(source)
+            constants = self._extract_frontend_signals(source, mode="html")
+            functions = [FunctionSkeleton(
+                name="render_template",
+                line_start=1,
+                line_end=max(1, len(lines)),
+                is_async=False,
+                is_method=False,
+                class_name=None,
+                parameters=[],
+                calls=[],
+                conditions=[],
+                returns=["return html markup"],
+                raises=[],
+                decorators=[],
+                logic_vars=[],
+                purpose="template markup with frontend selectors and data attributes",
+                sections=[],
+                state_writes=[],
+            )]
+            return FileSkeleton(
+                filepath=filepath,
+                language=config.name,
+                imports=imports,
+                functions=functions,
+                classes=[],
+                constants=constants[:30],
+                has_main_guard=False,
+                is_entry_point=False,
+                total_lines=len(lines),
+                skeleton_lines=0,
+                token_estimate=0,
+            )
+
+        if config.name == "css":
+            imports = self._extract_css_imports(source)
+            constants = self._extract_frontend_signals(source, mode="css")
+            functions = [FunctionSkeleton(
+                name="apply_styles",
+                line_start=1,
+                line_end=max(1, len(lines)),
+                is_async=False,
+                is_method=False,
+                class_name=None,
+                parameters=[],
+                calls=[],
+                conditions=[],
+                returns=["return stylesheet rules"],
+                raises=[],
+                decorators=[],
+                logic_vars=[],
+                purpose="stylesheet selectors and component styling rules",
+                sections=[],
+                state_writes=[],
+            )]
+            return FileSkeleton(
+                filepath=filepath,
+                language=config.name,
+                imports=imports,
+                functions=functions,
+                classes=[],
+                constants=constants[:30],
+                has_main_guard=False,
+                is_entry_point=False,
+                total_lines=len(lines),
+                skeleton_lines=0,
+                token_estimate=0,
+            )
+
         for i, line in enumerate(lines):
             stripped = line.strip()
             # Imports
             if stripped.startswith("import ") or stripped.startswith("from "):
+                imports.append(stripped[:80])
+            elif stripped.startswith("@import"):
                 imports.append(stripped[:80])
             # Function definitions (Python)
             elif re.match(r"^(async\s+)?def\s+\w+", stripped):
@@ -1343,6 +1418,8 @@ class SkeletonExtractor:
             self._redact(line.strip()[:90]) for line in lines
             if _re.match(r'^[A-Z][A-Z0-9_]{2,}\s*=', line.strip())
         ]
+        if config.name in ("javascript", "typescript"):
+            raw_consts.extend(self._extract_frontend_signals(source, mode="script"))
         compressed_consts = []
         for line in raw_consts:
             name, _, value = line.partition("=")
@@ -1417,6 +1494,98 @@ class SkeletonExtractor:
             skeleton_lines=0,
             token_estimate=0,
         )
+
+    def _extract_html_imports(self, source: str) -> List[str]:
+        import re
+        imports: List[str] = []
+        for m in re.finditer(r"<script[^>]*src=['\"]([^'\"]+)['\"]", source, flags=re.I):
+            imports.append(f"import {m.group(1)}")
+        for m in re.finditer(r"<link[^>]*href=['\"]([^'\"]+)['\"]", source, flags=re.I):
+            imports.append(f"import {m.group(1)}")
+        return list(dict.fromkeys(imports))[:20]
+
+    def _extract_css_imports(self, source: str) -> List[str]:
+        import re
+        imports: List[str] = []
+        for m in re.finditer(r"@import\s+['\"]([^'\"]+)['\"]", source):
+            imports.append(f"import {m.group(1)}")
+        return list(dict.fromkeys(imports))[:20]
+
+    def _extract_frontend_signals(self, source: str, mode: str) -> List[str]:
+        """
+        Extract frontend-impact signals for HTML/CSS/JSX/TSX:
+        class names, ids, data-* attrs, template literal HTML, and Tailwind hints.
+        """
+        import re
+
+        constants: List[str] = []
+
+        class_names: List[str] = []
+        ids: List[str] = []
+        data_attrs: List[str] = []
+        selectors: List[str] = []
+        tailwind_tokens: List[str] = []
+
+        # HTML-like attributes in markup and JSX/TSX.
+        attr_patterns = [
+            r"class\s*=\s*['\"]([^'\"]+)['\"]",
+            r"className\s*=\s*['\"]([^'\"]+)['\"]",
+            r"id\s*=\s*['\"]([^'\"]+)['\"]",
+        ]
+        for pat in attr_patterns[:2]:
+            for m in re.finditer(pat, source):
+                class_names.extend([c for c in re.split(r"\s+", m.group(1).strip()) if c])
+        for m in re.finditer(attr_patterns[2], source):
+            ids.append(m.group(1).strip())
+
+        for m in re.finditer(r"\b(data-[A-Za-z0-9_-]+)\s*=", source):
+            data_attrs.append(m.group(1))
+
+        # CSS selectors.
+        for m in re.finditer(r"(^|\n)\s*([^\{\n]+)\{", source):
+            raw_sel = m.group(2).strip()
+            if any(ch in raw_sel for ch in (".", "#", "[data-")):
+                selectors.append(raw_sel[:80])
+
+        # Parse lightweight HTML embedded in template literals.
+        for m in re.finditer(r"`([^`]{0,2000})`", source, flags=re.S):
+            chunk = m.group(1)
+            if "<" not in chunk or ">" not in chunk:
+                continue
+            for cm in re.finditer(r"class\s*=\s*['\"]([^'\"]+)['\"]", chunk):
+                class_names.extend([c for c in re.split(r"\s+", cm.group(1).strip()) if c])
+            for im in re.finditer(r"id\s*=\s*['\"]([^'\"]+)['\"]", chunk):
+                ids.append(im.group(1).strip())
+            for dm in re.finditer(r"\b(data-[A-Za-z0-9_-]+)\s*=", chunk):
+                data_attrs.append(dm.group(1))
+
+        # Tailwind-like utility tokens.
+        tw_prefixes = (
+            "bg-", "text-", "px-", "py-", "mx-", "my-", "grid", "flex", "items-",
+            "justify-", "rounded", "border", "shadow", "w-", "h-", "gap-", "sm:", "md:", "lg:",
+        )
+        for token in class_names:
+            if token.startswith(tw_prefixes):
+                tailwind_tokens.append(token)
+
+        class_names = list(dict.fromkeys(class_names))[:20]
+        ids = list(dict.fromkeys(ids))[:20]
+        data_attrs = list(dict.fromkeys(data_attrs))[:20]
+        selectors = list(dict.fromkeys(selectors))[:20]
+        tailwind_tokens = list(dict.fromkeys(tailwind_tokens))[:20]
+
+        if class_names:
+            constants.append(f"HTML_CLASSES = {','.join(class_names)}")
+        if ids:
+            constants.append(f"HTML_IDS = {','.join(ids)}")
+        if data_attrs:
+            constants.append(f"DATA_ATTRS = {','.join(data_attrs)}")
+        if selectors and mode in ("css", "script"):
+            constants.append(f"CSS_SELECTORS = {','.join(selectors[:12])}")
+        if tailwind_tokens:
+            constants.append(f"TAILWIND_CLASSES = {','.join(tailwind_tokens)}")
+
+        return constants
 
     def to_text(self, skeleton: FileSkeleton) -> str:
         """

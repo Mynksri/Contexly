@@ -72,6 +72,28 @@ LANGUAGE_CONFIGS: Dict[str, LanguageConfig] = {
         return_types=["return_statement"],
         async_markers=[],
     ),
+    "html": LanguageConfig(
+        name="html",
+        extensions=[".html", ".htm"],
+        function_types=[],
+        class_types=[],
+        import_types=[],
+        call_types=[],
+        condition_types=[],
+        return_types=[],
+        async_markers=[],
+    ),
+    "css": LanguageConfig(
+        name="css",
+        extensions=[".css", ".scss", ".sass", ".less"],
+        function_types=[],
+        class_types=[],
+        import_types=[],
+        call_types=[],
+        condition_types=[],
+        return_types=[],
+        async_markers=[],
+    ),
 }
 
 

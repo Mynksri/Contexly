@@ -12,7 +12,7 @@
 Contexly extracts the logic skeleton of your codebase: function signatures,
 conditions, calls, returns, and impact paths.
 
-Not raw code. The behavior map.
+Context Engine for AI Coding Agents - Stop missing dependencies.
 
 ## Why Contexly
 
@@ -85,6 +85,8 @@ Same understanding. 25x fewer tokens.
 | JavaScript | `.js`, `.mjs` | tree-sitter |
 | TypeScript | `.ts`, `.tsx` | tree-sitter |
 | Go | `.go` | tree-sitter |
+| HTML | `.html`, `.htm` | fallback parser + frontend signal tracker |
+| CSS | `.css`, `.scss`, `.sass`, `.less` | fallback parser + selector tracker |
 
 Files with unsupported extensions are skipped automatically.
 
@@ -238,6 +240,7 @@ See full setup examples in [MCP_SETUP.md](MCP_SETUP.md) and [mcp.example.json](m
 - [REPO_STRUCTURE.md](REPO_STRUCTURE.md): repository and module structure
 - [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md): documentation navigation
 - [MCP_SETUP.md](MCP_SETUP.md): client integration setup
+- [IMPACT_ANALYSIS.md](IMPACT_ANALYSIS.md): deep impact analysis workflow and flags
 
 ## Known Limitations
 

@@ -216,3 +216,72 @@ def test_extract_compact_one_line_tsx_component():
     finally:
         os.unlink(fpath)
 
+
+def test_extract_frontend_signals_from_tsx():
+    extractor = SkeletonExtractor()
+    code = """
+export const Panel = () => {
+  return <div className='bg-slate-900 text-white px-4' id='panel-root' data-testid='panel'>Hi</div>;
+};
+"""
+    with tempfile.NamedTemporaryFile(suffix=".tsx", mode="w", delete=False) as f:
+        f.write(code)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        constants_joined = " ".join(skeleton.constants)
+        assert "HTML_CLASSES" in constants_joined
+        assert "HTML_IDS" in constants_joined
+        assert "DATA_ATTRS" in constants_joined
+    finally:
+        os.unlink(fpath)
+
+
+def test_extract_html_fallback_support():
+    extractor = SkeletonExtractor()
+    code = """
+<html>
+  <head><link href='/app.css' rel='stylesheet'></head>
+  <body>
+    <div class='container grid' id='app-root' data-state='ready'></div>
+    <script src='/main.js'></script>
+  </body>
+</html>
+"""
+    with tempfile.NamedTemporaryFile(suffix=".html", mode="w", delete=False) as f:
+        f.write(code)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        assert skeleton.language == "html"
+        assert any("main.js" in item for item in skeleton.imports)
+        constants_joined = " ".join(skeleton.constants)
+        assert "HTML_CLASSES" in constants_joined
+        assert "DATA_ATTRS" in constants_joined
+    finally:
+        os.unlink(fpath)
+
+
+def test_extract_css_fallback_support():
+    extractor = SkeletonExtractor()
+    code = """
+@import './base.css';
+.card { color: white; }
+#panel-root { background: black; }
+[data-state='ready'] { opacity: 1; }
+"""
+    with tempfile.NamedTemporaryFile(suffix=".css", mode="w", delete=False) as f:
+        f.write(code)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        assert skeleton.language == "css"
+        constants_joined = " ".join(skeleton.constants)
+        assert "CSS_SELECTORS" in constants_joined
+        assert any("base.css" in item for item in skeleton.imports)
+    finally:
+        os.unlink(fpath)
+

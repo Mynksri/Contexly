@@ -542,6 +542,18 @@ class TestGetImpactPreview:
         result = builder.get_impact_preview(tree, "execute_trade")
         assert "[L10-20]" in result
 
+    def test_impact_dataflow_summary_and_depth(self):
+        tree = _make_tree(str(Path(tempfile.mkdtemp())))
+        builder = TreeBuilder()
+        result = builder.get_impact_preview(
+            tree,
+            "execute_trade",
+            depth=3,
+            include_dataflow=True,
+        )
+        assert "Indirect callers (up to 3 hops)" in result
+        assert "Summary:" in result
+
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #  Compute Tags helper
@@ -566,4 +578,73 @@ class TestComputeTags:
         )
         tags = builder._compute_tags(node)
         assert isinstance(tags, list)
+
+    def test_frontend_and_tailwind_tags(self):
+        builder = TreeBuilder()
+        node = TreeNode(
+            path="ui.tsx",
+            language="typescript",
+            skeleton_text="FILE:ui.tsx\n<div className='bg-slate-800 text-white px-4' id='root' data-testid='x'>",
+            token_estimate=20,
+            imports=[],
+            connections=[],
+            role="CORE",
+            imported_by=[],
+            is_entry_point=False,
+            has_duplicate_funcs=[],
+        )
+        tags = builder._compute_tags(node)
+        assert "#frontend" in tags
+        assert "#tailwind" in tags
+
+
+class TestSearchFiltersAndMinScore:
+    def test_search_index_exclude_legacy(self):
+        builder = TreeBuilder()
+        core_node = TreeNode(
+            path="core.py",
+            language="python",
+            skeleton_text="FILE:core.py\nexecute_trade()[1-10]\n  >execute_trade()",
+            token_estimate=30,
+            imports=[],
+            connections=[],
+            role="CORE",
+            imported_by=[],
+            is_entry_point=False,
+            has_duplicate_funcs=[],
+            main_functions=["execute_trade[1-10]"],
+        )
+        legacy_node = TreeNode(
+            path="legacy.py",
+            language="python",
+            skeleton_text="FILE:legacy.py\nexecute_trade()[1-10]\n  >execute_trade()",
+            token_estimate=30,
+            imports=[],
+            connections=[],
+            role="LEGACY",
+            imported_by=[],
+            is_entry_point=False,
+            has_duplicate_funcs=[],
+            main_functions=["execute_trade[1-10]"],
+        )
+        tree = CodebaseTree(
+            root_path=".",
+            nodes={"core.py": core_node, "legacy.py": legacy_node},
+            total_tokens=60,
+            raw_token_estimate=120,
+            file_count=2,
+            reduction_percent=50.0,
+            entry_files=[],
+            orphan_files=[],
+        )
+
+        results = builder.search_index(tree, "execute trade", top_k=5, exclude_roles={"LEGACY"})
+        assert all(r["role"] != "LEGACY" for r in results)
+
+    def test_filter_by_min_score_keeps_entry(self):
+        tree = _make_tree(str(Path(tempfile.mkdtemp())))
+        builder = TreeBuilder()
+        filtered = builder.filter_by_min_score(tree, min_score=50.0)
+        assert filtered.file_count >= 1
+        assert all(p in tree.nodes for p in filtered.nodes)
 
