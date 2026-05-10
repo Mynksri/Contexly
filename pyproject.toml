@@ -25,6 +25,7 @@ dependencies = [
     "tree-sitter-python>=0.21.0",
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-typescript>=0.21.0",
+    "tree-sitter-go>=0.21.0",
     "watchdog>=3.0.0",
     "click>=8.0.0",
     "mcp>=1.0.0",

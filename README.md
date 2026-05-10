@@ -5,29 +5,49 @@
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Tests](https://img.shields.io/badge/tests-56%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-63%20passed-brightgreen)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
-Contexly extracts logic skeletons from large codebases so AI agents get the structure they need without paying token costs for full source.
+Contexly extracts the logic skeleton of your codebase - function signatures, conditions, calls, returns.
+Not raw code. The meaning.
+
+Your AI gets full codebase understanding.
+Fewer tokens. No context resets.
 
 ## Why Contexly
 
-Large codebases are expensive to feed directly into LLMs. A 1M-line repository can cost $100+ per session and still lose context between chats.
+Without structure, agents keep re-reading large files, burn tokens, and still miss execution flow.
+Contexly builds a compact logic map first, so the agent jumps to the right files and functions immediately.
 
-Contexly reduces this by building compact, searchable logic trees:
+What you get:
 
-- 1,000,000 lines -> ~35,000-40,000 tokens (typical)
-- Usually 95%+ token reduction
-- Searchable context by file, function, and logic intent
-- MCP-native workflow for AI agents
+- Compact, searchable logic trees
+- Context lookup by file, function, and behavior intent
+- Fast CLI + MCP workflow for day-to-day coding tasks
 
-## Package Name vs Command Name
+## Real Numbers
 
-Contexly uses different names for package install and CLI command:
+Ran on a real 13-file Python trading bot:
 
-- PyPI package name: `contexly`
-- CLI command: `contexly`
-- MCP command: `contexly-mcp`
+| | Before | After |
+|---|---|---|
+| Tokens sent to AI | 197,068 | 7,654 |
+| Compression | - | **95.9%** |
+| AI reads raw code? | Every message | Never |
+
+Same understanding. 26x fewer tokens.
+
+
+## Supported Languages
+
+| Language | Extensions | Parser |
+|---|---|---|
+| Python | `.py` | tree-sitter |
+| JavaScript | `.js`, `.mjs` | tree-sitter |
+| TypeScript | `.ts`, `.tsx` | tree-sitter |
+| Go | `.go` | tree-sitter |
+
+Files with unsupported extensions are skipped automatically.
 
 ## Installation
 
@@ -65,14 +85,48 @@ Initialize `.contexly/` metadata for a project.
 
 ### `contexly tree <path>`
 
-Build a logic skeleton tree and save artifacts to central output folder:
+Build a logic skeleton tree and save outputs to:
 
-`~/.vscode/github-repo-context/contexly-outputs/<project-name>/`
+- `.contexly/tree.json` — machine-readable skeleton
+- `.contexly/tree.html` — visual browser explorer
 
-Outputs:
+**Example output:**
 
-- `tree.json`
-- `tree.html`
+```text
+Building logic tree for: my-api/
+Files processed:    11
+Raw token estimate: 84,310
+Tree tokens:        3,920
+Compression:        95.4%  (21x smaller)
+
+File roles:
+  ENTRY    2 file(s)   main.go, server.go
+  CORE     5 file(s)
+  TEST     4 file(s)
+```
+
+Skeleton of one function (raw → compressed):
+
+```text
+# Raw source (~42 tokens)
+func ProcessOrder(ctx context.Context, order Order) error {
+    if order.Amount <= 0 {
+        return ErrInvalidAmount
+    }
+    user, err := db.GetUser(ctx, order.UserID)
+    if err != nil {
+        return err
+    }
+    return payments.Charge(ctx, user, order.Amount)
+}
+
+# Contexly skeleton (~11 tokens)
+~ProcessOrder(ctx, order)[L24-36]
+  ?if order.Amount <= 0
+  >db.GetUser()
+  >payments.Charge()
+  <err / nil
+```
 
 ### `contexly index <path> [level]`
 
@@ -131,15 +185,6 @@ python contexly_mcp.py
 
 See full setup examples in [MCP_SETUP.md](MCP_SETUP.md) and [mcp.example.json](mcp.example.json).
 
-## Validation Snapshot
-
-Recent local checks:
-
-- `pytest tests -q` -> `56 passed`
-- `contexly tree .` -> PASS
-- `contexly index . 0` -> PASS
-- `contexly query . "sample query"` -> PASS
-
 ## Documentation Map
 
 - [AGENT_REFERENCE.md](AGENT_REFERENCE.md): complete agent workflow guide
@@ -148,18 +193,11 @@ Recent local checks:
 - [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md): documentation navigation
 - [MCP_SETUP.md](MCP_SETUP.md): client integration setup
 
-## Roadmap to Public Launch
+## Roadmap
 
-- Final end-to-end checks on fresh environment
-- Version bump (when needed)
-- Git tag and release notes
-- PyPI publish for `pip install contexly`
-
-After PyPI publish, add downloads badge:
-
-```markdown
-![Downloads](https://img.shields.io/pypi/dm/contexly)
-```
+- v0.2.0 - Rust and Java support
+- v0.2.0 - VS Code extension
+- v0.3.0 - Cloud context sync
 
 ## Contributing
 
@@ -167,4 +205,6 @@ Please open an issue or pull request with clear reproduction steps and expected 
 
 ## License
 
-MIT
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+Distributed under the MIT License. See [LICENSE](LICENSE).

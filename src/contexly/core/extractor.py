@@ -28,6 +28,12 @@ try:
 except ImportError:
     TREE_SITTER_AVAILABLE = False
 
+try:
+    import tree_sitter_go as tsgo
+    TREE_SITTER_GO_AVAILABLE = True
+except ImportError:
+    TREE_SITTER_GO_AVAILABLE = False
+
 
 @dataclass
 class FunctionSkeleton:
@@ -137,6 +143,12 @@ class SkeletonExtractor:
             self._parsers["typescript"] = Parser(TS_LANGUAGE)
         except Exception:
             pass
+        if TREE_SITTER_GO_AVAILABLE:
+            try:
+                GO_LANGUAGE = Language(tsgo.language())
+                self._parsers["go"] = Parser(GO_LANGUAGE)
+            except Exception:
+                pass
 
     def extract_file(self, filepath: str) -> Optional[FileSkeleton]:
         """

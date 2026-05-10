@@ -61,6 +61,17 @@ LANGUAGE_CONFIGS: Dict[str, LanguageConfig] = {
         return_types=["return_statement"],
         async_markers=["async"],
     ),
+    "go": LanguageConfig(
+        name="go",
+        extensions=[".go"],
+        function_types=["function_declaration", "method_declaration", "func_literal"],
+        class_types=["type_declaration"],
+        import_types=["import_declaration"],
+        call_types=["call_expression"],
+        condition_types=["if_statement"],
+        return_types=["return_statement"],
+        async_markers=[],
+    ),
 }
 
 
