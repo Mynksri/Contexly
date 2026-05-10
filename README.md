@@ -6,7 +6,7 @@
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Tests](https://img.shields.io/badge/tests-63%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
 Contexly extracts the logic skeleton of your codebase: function signatures,
@@ -114,6 +114,9 @@ contexly query . "test query" 2 1
 
 # 4) Open generated HTML tree
 contexly view .
+
+# Optional: force fresh tree build (ignore cached tree.json)
+contexly --rebuild query . "test query" 2 1
 ```
 
 ## CLI Commands
@@ -180,6 +183,7 @@ Search context and build targeted result around matched files.
 
 - `depth` = how many dependency hops from matched files (`1` = direct links)
 - `level` = output detail (`1` = index view, `2` = function skeletons)
+- Add `--rebuild` before command to ignore cached tree and force fresh analysis.
 
 Examples:
 
