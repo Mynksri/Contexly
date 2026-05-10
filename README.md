@@ -205,6 +205,12 @@ Flags:
 - `--show-paths` — display complete call paths from entry points to target function
 - `--exclude <role>` — skip files by role (e.g., `--exclude legacy`)
 
+Risk tiers in output:
+- `LOW` — minimal downstream impact detected
+- `MEDIUM` — some high-impact side effects detected
+- `HIGH` — broad risky dependencies (API/DB/notifications/blockchain etc.)
+- `PRODUCTION-CRITICAL` — large blast radius likely for live systems
+
 Examples:
 
 ```bash

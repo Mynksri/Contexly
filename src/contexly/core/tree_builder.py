@@ -914,46 +914,65 @@ class TreeBuilder:
         caller_lines, caller_meta = self._collect_direct_callers(tree, fn_lower, file_hint)
         impacted_files = self._expand_indirect_file_impact(tree, caller_meta, depth=depth)
 
-        direct_files = {meta["caller_file"] for meta in caller_meta}
+        direct_files = {meta["caller_file"] for meta in caller_meta if meta.get("caller_file")}
         indirect_files = [p for p, hop in impacted_files.items() if hop >= 2]
 
-        # Potential breaks = unique direct callers + transitive impacted files.
-        potential_breaks = len(direct_files) + len(indirect_files)
+        # Infer potential target file(s) for clearer direct-caller classification.
+        target_files: Set[str] = set()
+        for entry in tree.call_graph:
+            if " -> " not in entry:
+                continue
+            _, targets_str = entry.split(" -> ", 1)
+            for target in targets_str.split(", "):
+                t_stem, _, t_func = target.partition(".")
+                if t_func.lower() != fn_lower:
+                    continue
+                if file_hint and file_hint.lower() not in t_stem.lower():
+                    continue
+                resolved = self._resolve_tree_file_by_stem(tree, t_stem)
+                if resolved:
+                    target_files.add(resolved)
+
+        if not target_files and file_hint:
+            for path in tree.nodes:
+                if file_hint.lower() in Path(path).name.lower():
+                    target_files.add(path)
 
         lines = [f"IMPACT PREVIEW: {function_name}()"]
         if file_hint:
             lines.append(f"  Defined in: {file_hint}")
 
-        if caller_lines:
-            # Separate same-file and cross-file callers for better clarity
-            cross_file_callers = []
-            same_file_callers = []
-            
-            # Extract file info from caller_meta
-            for line in caller_lines:
-                # Try to detect if it's a cross-file call
-                is_cross_file = False
-                for meta in caller_meta:
-                    if meta.get("caller_symbol", "") in line:
-                        caller_file = meta.get("caller_file", "")
-                        if caller_file and file_hint and file_hint.lower() not in caller_file.lower():
-                            is_cross_file = True
-                        break
-                
-                if is_cross_file:
-                    cross_file_callers.append(line)
+        if caller_meta:
+            cross_file_callers: List[str] = []
+            same_file_callers: List[str] = []
+            symbol_mentions: List[str] = []
+            for meta in caller_meta:
+                caller_file = meta.get("caller_file", "")
+                caller_symbol = meta.get("caller_symbol", "callsite")
+                confidence = meta.get("confidence", "LOW")
+                if not caller_file:
+                    continue
+                line_range = self._lookup_symbol_line_range(tree, caller_file, caller_symbol)
+                suffix = f" [L{line_range}]" if line_range and caller_symbol != "mention" else ""
+                row = f"  - {Path(caller_file).name} -> {caller_symbol}(){suffix} [{confidence}]"
+                if caller_symbol == "mention":
+                    symbol_mentions.append(f"  - {Path(caller_file).name} (symbol mention) [LOW]")
+                elif target_files and caller_file not in target_files:
+                    cross_file_callers.append(row)
                 else:
-                    same_file_callers.append(line)
-            
-            # Display cross-file callers first (more important)
+                    same_file_callers.append(row)
+
+            total_direct = len(cross_file_callers) + len(same_file_callers)
+            lines.append(f"  Direct callers ({total_direct}):")
+            lines.append(f"  - Cross-file direct: {len(cross_file_callers)}")
             if cross_file_callers:
-                lines.append(f"  Direct callers ({len(caller_lines)}) - Cross-file:")
                 lines.extend(cross_file_callers[:8])
-            
+            lines.append(f"  - Same-file direct: {len(same_file_callers)}")
             if same_file_callers:
-                label = "Same-file:" if cross_file_callers else f"({len(caller_lines)}):"
-                lines.append(f"  Direct callers {label}")
                 lines.extend(same_file_callers[:8])
+            if symbol_mentions:
+                lines.append(f"  - Symbol mentions: {len(symbol_mentions)}")
+                lines.extend(symbol_mentions[:6])
         else:
             lines.append("  Direct callers: none detected in current index")
 
@@ -967,6 +986,7 @@ class TreeBuilder:
         else:
             lines.append("  - none")
 
+        sidefx: List[str] = []
         if include_dataflow:
             dataflow = self._build_dataflow_summary(tree, fn_lower, file_hint)
             sidefx = self._detect_side_effects(tree, fn_lower, file_hint)
@@ -997,19 +1017,18 @@ class TreeBuilder:
             else:
                 lines.append("    No call paths found")
 
-        # Calculate high impact from side effects if available
-        high_impact_files = set()
-        risk_domains = set()  # Track what's at risk
-        
+        # Calculate high-impact and keep summary counts aligned with side-effects output.
+        high_impact_files: Set[str] = set()
+        risk_domains: Set[str] = set()
+        side_effect_files: Set[str] = set()
+
         if include_dataflow:
-            sidefx = self._detect_side_effects(tree, fn_lower, file_hint)
             for sfx in sidefx:
+                file_part = sfx.split(":", 1)[0].strip()
+                if file_part:
+                    side_effect_files.add(file_part)
                 if "(HIGH)" in sfx:
-                    # Extract file name from side effects line
-                    file_part = sfx.split(":")[0].strip()
                     high_impact_files.add(file_part)
-                    
-                    # Extract domain context
                     if "blockchain" in sfx.lower():
                         risk_domains.add("Blockchain")
                     if "telegram" in sfx.lower() or "notif" in sfx.lower():
@@ -1018,16 +1037,13 @@ class TreeBuilder:
                         risk_domains.add("API/External Services")
                     if "trade" in sfx.lower() or "round" in function_name.lower():
                         risk_domains.add("Trading")
-            
             high_impact = len(high_impact_files)
         else:
             high_impact = sum(1 for m in caller_meta if m.get("confidence") == "HIGH")
-        
-        # Files affected = direct + indirect files
-        all_affected = set(direct_files).union(set(impacted_files.keys()))
-        files_affected = len(all_affected)
-        
-        # Potential breaks = all affected files
+
+        all_affected_paths = set(direct_files).union(set(impacted_files.keys()))
+        all_affected_names = {Path(p).name for p in all_affected_paths if p}
+        files_affected = len(all_affected_names.union(side_effect_files)) if include_dataflow else len(all_affected_names)
         potential_breaks = files_affected
 
         lines.append("")
@@ -1040,8 +1056,25 @@ class TreeBuilder:
         else:
             summary_line = f"Summary: {files_affected} files affected | {high_impact} high impact | {potential_breaks} potential breaks"
             risk_msg = f"[!] Changing \033[94m{function_name}\033[0m() may break downstream behavior."
+
+        # Explicit production-risk classification for safer release decisions.
+        fn_l = function_name.lower()
+        production_signals = set(risk_domains)
+        if any(k in fn_l for k in ("auth", "token", "session", "login")):
+            production_signals.add("Authentication")
+        if any(k in fn_l for k in ("pay", "payment", "invoice", "charge")):
+            production_signals.add("Payments")
+
+        risk_tier = "LOW"
+        if high_impact >= 8 and len(production_signals) >= 2:
+            risk_tier = "PRODUCTION-CRITICAL"
+        elif high_impact >= 4 and len(production_signals) >= 1:
+            risk_tier = "HIGH"
+        elif high_impact >= 1:
+            risk_tier = "MEDIUM"
         
         lines.append(summary_line)
+        lines.append(f"Risk Tier: {risk_tier}")
 
         if potential_breaks > 0:
             lines.append(risk_msg)
