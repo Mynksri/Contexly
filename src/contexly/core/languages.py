@@ -34,7 +34,7 @@ LANGUAGE_CONFIGS: Dict[str, LanguageConfig] = {
     ),
     "javascript": LanguageConfig(
         name="javascript",
-        extensions=[".js", ".mjs"],
+        extensions=[".js", ".mjs", ".jsx"],
         function_types=[
             "function_declaration", "arrow_function",
             "function_expression", "method_definition"

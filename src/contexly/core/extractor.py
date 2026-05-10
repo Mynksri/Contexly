@@ -247,33 +247,51 @@ class SkeletonExtractor:
         imports = self._extract_imports(root, lines, config)
         functions = []
         classes = []
+        seen_functions = set()
 
-        for node in root.children:
-            if node.type in config.class_types:
-                cls = self._extract_class(node, lines, config)
-                if cls:
-                    classes.append(cls)
-            elif node.type in config.function_types:
-                func = self._extract_function(node, lines, config)
-                if func:
-                    functions.append(func)
-            elif node.type == "decorated_definition":
-                # @dataclass class Foo or @staticmethod def bar
-                for child in node.children:
-                    if child.type in config.class_types:
-                        cls = self._extract_class(child, lines, config)
-                        if cls:
-                            # Mark it as decorated (e.g. dataclass)
-                            for deco_child in node.children:
-                                if deco_child.type == "decorator":
-                                    dec_text = lines[deco_child.start_point[0]].strip()
-                                    if dec_text not in cls.fields:
-                                        cls.fields.insert(0, dec_text)
-                            classes.append(cls)
-                    elif child.type in config.function_types:
-                        func = self._extract_function(child, lines, config)
-                        if func:
-                            functions.append(func)
+        def add_function(func: Optional[FunctionSkeleton]):
+            if not func:
+                return
+            if func.name in seen_functions:
+                return
+            seen_functions.add(func.name)
+            functions.append(func)
+
+        for raw_node in root.children:
+            # Unwrap export wrappers so JS/TS declarations are visible.
+            candidate_nodes = [raw_node]
+            if raw_node.type in ("export_statement", "export_declaration"):
+                candidate_nodes.extend(raw_node.children)
+
+            for node in candidate_nodes:
+                if node.type in config.class_types:
+                    cls = self._extract_class(node, lines, config)
+                    if cls:
+                        classes.append(cls)
+                elif node.type in config.function_types:
+                    add_function(self._extract_function(node, lines, config))
+                elif node.type == "decorated_definition":
+                    # @dataclass class Foo or @staticmethod def bar
+                    for child in node.children:
+                        if child.type in config.class_types:
+                            cls = self._extract_class(child, lines, config)
+                            if cls:
+                                # Mark it as decorated (e.g. dataclass)
+                                for deco_child in node.children:
+                                    if deco_child.type == "decorator":
+                                        dec_text = lines[deco_child.start_point[0]].strip()
+                                        if dec_text not in cls.fields:
+                                            cls.fields.insert(0, dec_text)
+                                classes.append(cls)
+                        elif child.type in config.function_types:
+                            add_function(self._extract_function(child, lines, config))
+
+                # JS/TS/TSX commonly define components/hooks as:
+                # const Component = (...) => { ... }
+                # const useThing = () => { ... }
+                if config.name in ("javascript", "typescript"):
+                    for assigned in self._extract_assigned_functions(node, lines, config):
+                        add_function(assigned)
 
         constants = self._extract_constants(root, lines, config)
         has_main_guard = self._has_main_guard(source)
@@ -292,6 +310,120 @@ class SkeletonExtractor:
             skeleton_lines=0,
             token_estimate=0,
         )
+
+    def _extract_assigned_functions(
+        self,
+        node: "Node",
+        lines: List[str],
+        config: LanguageConfig,
+    ) -> List[FunctionSkeleton]:
+        """
+        Extract top-level JS/TS functions assigned to variables.
+        Example: const Component = () => { ... }
+        """
+        extracted: List[FunctionSkeleton] = []
+
+        def walk(n: "Node"):
+            if n.type == "variable_declarator":
+                name_node = None
+                fn_node = None
+
+                for child in n.children:
+                    if child.type in ("identifier", "property_identifier") and name_node is None:
+                        name_node = child
+                    if child.type in ("arrow_function", "function_expression"):
+                        fn_node = child
+
+                if fn_node is not None:
+                    name = (
+                        name_node.text.decode("utf-8", errors="ignore")
+                        if name_node is not None
+                        else ""
+                    )
+                    if not name:
+                        text = n.text.decode("utf-8", errors="ignore")
+                        import re
+                        m = re.match(r"\s*(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)", text)
+                        if m:
+                            name = m.group(1)
+
+                    if name and not name.startswith("_test") and name != "test":
+                        params = self._extract_function_parameters(fn_node)
+                        body_node = None
+                        for child in fn_node.children:
+                            if child.type in ("block", "statement_block"):
+                                body_node = child
+                                break
+
+                        calls = self._extract_calls(body_node or fn_node, config)
+                        conditions = self._extract_conditions(body_node or fn_node, lines, config)
+                        returns = self._extract_returns(body_node or fn_node, lines, config)
+                        raises = self._extract_raises(body_node or fn_node, lines)
+                        logic_vars = self._extract_logic_vars(body_node or fn_node, lines)
+                        sections = self._extract_sections(fn_node, lines)
+                        state_writes = self._extract_state_writes(body_node) if body_node else []
+                        is_async = "async" in fn_node.text.decode("utf-8", errors="ignore")[:20]
+
+                        purpose = self._extract_symbol_purpose(
+                            node=fn_node,
+                            lines=lines,
+                            name=name,
+                            calls=calls,
+                            conditions=conditions,
+                            returns=returns,
+                            state_writes=state_writes,
+                            is_async=is_async,
+                            kind="function",
+                        )
+
+                        extracted.append(FunctionSkeleton(
+                            name=name,
+                            line_start=fn_node.start_point[0] + 1,
+                            line_end=fn_node.end_point[0] + 1,
+                            is_async=is_async,
+                            is_method=False,
+                            class_name=None,
+                            parameters=params,
+                            calls=calls,
+                            conditions=conditions,
+                            returns=returns,
+                            raises=raises,
+                            decorators=[],
+                            logic_vars=logic_vars,
+                            purpose=purpose,
+                            sections=sections,
+                            state_writes=state_writes,
+                        ))
+
+            for child in n.children:
+                # Keep extraction scoped to top-level declarations.
+                if n.type in ("program", "export_statement", "export_declaration", "lexical_declaration", "variable_declaration"):
+                    walk(child)
+
+        walk(node)
+        return extracted
+
+    def _extract_function_parameters(self, node: "Node") -> List[str]:
+        """Extract parameter names from a function/arrow-function node."""
+        params: List[str] = []
+
+        for child in node.children:
+            if child.type in ("parameters", "formal_parameters"):
+                for param in child.children:
+                    if param.type in ("identifier", "property_identifier"):
+                        pname = param.text.decode("utf-8", errors="ignore")
+                        if pname not in ("self", "cls"):
+                            params.append(pname)
+
+        if not params:
+            for child in node.children:
+                if child.type in ("identifier", "property_identifier"):
+                    pname = child.text.decode("utf-8", errors="ignore")
+                    if pname not in ("self", "cls"):
+                        params.append(pname)
+                        break
+
+        return params[:12]
 
     def _extract_imports(
         self, root: "Node", lines: List[str], config: LanguageConfig

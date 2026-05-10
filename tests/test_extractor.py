@@ -92,3 +92,80 @@ def test_to_text_format():
     finally:
         os.unlink(fpath)
 
+
+SAMPLE_TSX = '''
+import React, { useEffect, useState } from "react";
+import { useOrders } from "./hooks/useOrders";
+
+export const usePivotSignal = (symbol: string) => {
+    const [signal, setSignal] = useState("hold");
+    useEffect(() => {
+        if (symbol) setSignal("buy");
+    }, [symbol]);
+    return signal;
+};
+
+export const PivotPanel = ({ symbol }: { symbol: string }) => {
+    const orders = useOrders(symbol);
+    const signal = usePivotSignal(symbol);
+    if (!orders.length) return <div>No orders</div>;
+    return <div>{signal}</div>;
+};
+'''
+
+
+def test_extract_tsx_assigned_functions_and_hooks():
+    extractor = SkeletonExtractor()
+    with tempfile.NamedTemporaryFile(suffix=".tsx", mode="w", delete=False) as f:
+        f.write(SAMPLE_TSX)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        assert skeleton.language == "typescript"
+        names = [fn.name for fn in skeleton.functions]
+        assert "PivotPanel" in names
+        assert "usePivotSignal" in names
+
+        panel = next(fn for fn in skeleton.functions if fn.name == "PivotPanel")
+        assert any("useOrders" in call for call in panel.calls)
+        assert any("usePivotSignal" in call for call in panel.calls)
+    finally:
+        os.unlink(fpath)
+
+
+def test_extract_tsx_hooks_calls_present():
+    extractor = SkeletonExtractor()
+    with tempfile.NamedTemporaryFile(suffix=".tsx", mode="w", delete=False) as f:
+        f.write(SAMPLE_TSX)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        hook = next(fn for fn in skeleton.functions if fn.name == "usePivotSignal")
+        calls_joined = " ".join(hook.calls)
+        assert "useState" in calls_joined
+        assert "useEffect" in calls_joined
+    finally:
+        os.unlink(fpath)
+
+
+def test_extract_jsx_extension_supported():
+    extractor = SkeletonExtractor()
+    jsx = """
+import React from 'react';
+export const Widget = () => {
+    return <button>OK</button>;
+};
+"""
+    with tempfile.NamedTemporaryFile(suffix=".jsx", mode="w", delete=False) as f:
+        f.write(jsx)
+        fpath = f.name
+    try:
+        skeleton = extractor.extract_file(fpath)
+        assert skeleton is not None
+        assert skeleton.language == "javascript"
+        assert any(fn.name == "Widget" for fn in skeleton.functions)
+    finally:
+        os.unlink(fpath)
+
