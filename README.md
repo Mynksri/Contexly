@@ -249,9 +249,13 @@ If you hit a bad case, open an issue with a minimal repro project. That helps im
 
 ## Roadmap
 
-- v0.2.0 - VS Code extension (interactive context + impact in editor)
-- v0.2.0 - Rust and Java support
-- v0.3.0 - Cloud context sync
+- v0.2.0 - AI coding agent CLI (automated refactoring powered by Contexly logic maps)
+- v0.2.0 - VS Code extension (interactive context + impact visualization in editor)
+- v0.2.0 - Rust support (foundation ready)
+- v0.3.0 - Cloud context sync (share context snapshots across teams)
+- v0.3.0 - Java support
+
+**Currently Supported Languages:** Python, JavaScript, TypeScript, Go
 
 ## Contributing
 
