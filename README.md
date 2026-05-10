@@ -211,6 +211,21 @@ Risk tiers in output:
 - `HIGH` — broad risky dependencies (API/DB/notifications/blockchain etc.)
 - `PRODUCTION-CRITICAL` — large blast radius likely for live systems
 
+Dynamic risk rules (optional):
+- Contexly infers risk domains from whatever side-effect labels it detects at runtime.
+- You can customize side-effect detection rules per project via `.contexly/risk_rules.json`.
+
+Example `.contexly/risk_rules.json`:
+
+```json
+{
+  "effect_rules": [
+    {"label": "queue", "keywords": ["kafka", "rabbitmq", "sqs"]},
+    {"label": "payments", "keywords": ["stripe", "razorpay", "charge"]}
+  ]
+}
+```
+
 Examples:
 
 ```bash

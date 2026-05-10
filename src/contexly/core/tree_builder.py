@@ -1029,14 +1029,10 @@ class TreeBuilder:
                     side_effect_files.add(file_part)
                 if "(HIGH)" in sfx:
                     high_impact_files.add(file_part)
-                    if "blockchain" in sfx.lower():
-                        risk_domains.add("Blockchain")
-                    if "telegram" in sfx.lower() or "notif" in sfx.lower():
-                        risk_domains.add("Notifications")
-                    if "api" in sfx.lower():
-                        risk_domains.add("API/External Services")
-                    if "trade" in sfx.lower() or "round" in function_name.lower():
-                        risk_domains.add("Trading")
+
+                # Dynamic domain inference from detected side-effect labels.
+                for label in self._extract_side_effect_labels(sfx):
+                    risk_domains.add(self._normalize_risk_domain(label))
             high_impact = len(high_impact_files)
         else:
             high_impact = sum(1 for m in caller_meta if m.get("confidence") == "HIGH")
@@ -1058,19 +1054,13 @@ class TreeBuilder:
             risk_msg = f"[!] Changing \033[94m{function_name}\033[0m() may break downstream behavior."
 
         # Explicit production-risk classification for safer release decisions.
-        fn_l = function_name.lower()
-        production_signals = set(risk_domains)
-        if any(k in fn_l for k in ("auth", "token", "session", "login")):
-            production_signals.add("Authentication")
-        if any(k in fn_l for k in ("pay", "payment", "invoice", "charge")):
-            production_signals.add("Payments")
-
+        domain_count = len(risk_domains)
         risk_tier = "LOW"
-        if high_impact >= 8 and len(production_signals) >= 2:
+        if high_impact >= 8 or (high_impact >= 6 and files_affected >= 10):
             risk_tier = "PRODUCTION-CRITICAL"
-        elif high_impact >= 4 and len(production_signals) >= 1:
+        elif high_impact >= 4 or domain_count >= 3:
             risk_tier = "HIGH"
-        elif high_impact >= 1:
+        elif high_impact >= 1 or domain_count >= 1:
             risk_tier = "MEDIUM"
         
         lines.append(summary_line)
@@ -1243,13 +1233,7 @@ class TreeBuilder:
         file_hint: Optional[str],
     ) -> List[str]:
         effects: List[str] = []
-        checks = [
-            ("database", ("db.", "sqlite", "postgres", "mysql", "mongodb")),
-            ("api", ("aiohttp", "requests", "httpx", "fetch(", "websocket", "api")),
-            ("telegram", ("telegram", "send_telegram", "notify_")),
-            ("file-write", ("open(", "write(", "json.dump", "Path(", "to_csv")),
-            ("blockchain", ("web3", "contract", "tx", "polygon", "nonce")),
-        ]
+        checks = self._load_side_effect_rules(tree.root_path)
 
         for path, node in tree.nodes.items():
             text = node.skeleton_text.lower()
@@ -1264,6 +1248,64 @@ class TreeBuilder:
                 effects.append(f"{Path(path).name}: {', '.join(matched)} ({conf})")
 
         return effects
+
+    def _load_side_effect_rules(self, root_path: str) -> List[Tuple[str, Tuple[str, ...]]]:
+        """Load side-effect detection rules from config with sane defaults.
+
+        Optional file: .contexly/risk_rules.json
+        Shape:
+            {
+              "effect_rules": [
+                {"label": "queue", "keywords": ["kafka", "rabbitmq"]}
+              ]
+            }
+        """
+        default_rules: List[Tuple[str, Tuple[str, ...]]] = [
+            ("database", ("db.", "sqlite", "postgres", "mysql", "mongodb")),
+            ("api", ("aiohttp", "requests", "httpx", "fetch(", "websocket", "api")),
+            ("telegram", ("telegram", "send_telegram", "notify_")),
+            ("file-write", ("open(", "write(", "json.dump", "path(", "to_csv")),
+            ("blockchain", ("web3", "contract", "tx", "polygon", "nonce")),
+        ]
+
+        cfg_path = Path(root_path) / ".contexly" / "risk_rules.json"
+        if not cfg_path.exists():
+            return default_rules
+
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            rows = data.get("effect_rules", [])
+            loaded: List[Tuple[str, Tuple[str, ...]]] = []
+            for row in rows:
+                label = str(row.get("label", "")).strip().lower()
+                kws = row.get("keywords", [])
+                if not label or not isinstance(kws, list):
+                    continue
+                keywords = tuple(str(k).strip().lower() for k in kws if str(k).strip())
+                if keywords:
+                    loaded.append((label, keywords))
+            return loaded or default_rules
+        except Exception:
+            return default_rules
+
+    def _extract_side_effect_labels(self, sidefx_row: str) -> List[str]:
+        """Parse labels from a side-effect output row.
+
+        Example row: "trade_executor.py: api, blockchain (HIGH)"
+        Returns: ["api", "blockchain"]
+        """
+        if ":" not in sidefx_row:
+            return []
+        _, rhs = sidefx_row.split(":", 1)
+        rhs = rhs.rsplit("(", 1)[0].strip()
+        return [p.strip().lower() for p in rhs.split(",") if p.strip()]
+
+    def _normalize_risk_domain(self, label: str) -> str:
+        """Normalize effect label into display-friendly risk domain."""
+        cleaned = label.replace("_", " ").replace("-", " ").strip()
+        if not cleaned:
+            return "Unknown"
+        return " ".join(part.capitalize() for part in cleaned.split())
 
     def _build_call_paths(
         self,
