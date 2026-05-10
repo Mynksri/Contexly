@@ -34,21 +34,27 @@ What you get:
 contexly query . "pivot hedge" 2 2
 ```
 
-Agent immediately sees:
+Agent gets back:
 
-- `price_monitor.py` - signal decision point
-- `round_manager.py` - amount calculation
-- `round_manager.py` - execution path
-- impact chain for related downstream modules
+```text
+price_monitor.py [L39-130]   <- signal decided here
+round_manager.py [L110-157]  <- amount calculated here
+round_manager.py [L164-443]  <- order execution path
+Impact: claim_manager.py reads pivot_count too
+```
 
-Then it edits only relevant files, not the whole repo.
+Agent edits exactly those files. Nothing else.
+No hallucinated edits, no missed dependency hops.
 
 ## Why I Built This
 
 I was building a SaaS product on top of OpenClaw + n8n
 (roughly 700k lines combined).
 
-My agent kept patching a few files and missing cross-codebase impact.
+As a solo developer using coding agents daily, I kept seeing
+the same failure: the agent patched 2-3 files and declared success,
+while real impact lived elsewhere.
+
 Contexly was built to fix that exact failure mode.
 
 ## Bonus: Contexly Flags Smells
@@ -172,6 +178,9 @@ Print compact index from existing tree or create one if missing.
 
 Search context and build targeted result around matched files.
 
+- `depth` = how many dependency hops from matched files (`1` = direct links)
+- `level` = output detail (`1` = index view, `2` = function skeletons)
+
 Examples:
 
 ```bash
@@ -228,8 +237,8 @@ See full setup examples in [MCP_SETUP.md](MCP_SETUP.md) and [mcp.example.json](m
 
 ## Roadmap
 
+- v0.2.0 - VS Code extension (interactive context + impact in editor)
 - v0.2.0 - Rust and Java support
-- v0.2.0 - VS Code extension
 - v0.3.0 - Cloud context sync
 
 ## Contributing
