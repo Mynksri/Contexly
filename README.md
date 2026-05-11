@@ -281,7 +281,9 @@ See full setup examples in [MCP_SETUP.md](MCP_SETUP.md) and [mcp.example.json](m
 
 ## Real-World Validation: OpenClaw
 
-Contexly has been thoroughly tested on **OpenClaw**, a production-grade multi-asset automated trading system with **400k+ lines of code** across multiple languages.
+Contexly has been thoroughly tested on **OpenClaw**, a large-scale **AI agent platform** with **400k+ lines of code** across multiple languages (TypeScript, Python, JavaScript, Go, HTML, CSS).
+
+The codebase includes agent runtime internals, skill management, multi-provider integration, and complex orchestration logic - making it an ideal real-world test case for Contexly's scalability.
 
 **Key Results:**
 - **17,358 total files** analyzed
