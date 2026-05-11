@@ -12,6 +12,7 @@ env/
 *.json
 !pyproject.toml
 !mcp.example.json
+!tests/fixtures/openclaw/openclaw-tree.json
 .DS_Store
 .pytest_cache/
 .mypy_cache/
