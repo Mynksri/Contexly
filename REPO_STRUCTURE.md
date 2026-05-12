@@ -50,7 +50,7 @@ Main implementation of Contexly logic skeletons and tree analysis.
 
 ### Querying & Analysis
 - **`core/query_engine.py`**
-  - `QueryEngine` class: semantic search over skeleton trees
+  - `QueryEngine` class: keyword-ranked search over skeleton trees
   - Methods: `search()` (find matching contexts), `rank_results()` (score by relevance)
   - Takes: query_text, depth, level, top_k parameters
   - Returns: ranked matches with scores

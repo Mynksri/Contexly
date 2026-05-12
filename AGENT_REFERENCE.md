@@ -181,7 +181,7 @@ Agent: Pastes into chat so user can see structure
 
 ### Tool 4: `query(path, query_text, depth=1, level=2, top_k=8, debug=false)`
 
-**Purpose**: Semantic search for context relevant to a task
+**Purpose**: Keyword-ranked search with dependency expansion for context relevant to a task
 
 **Signature**:
 ```python
@@ -263,6 +263,30 @@ User: "There's a bug with session expiration."
 ← Returns: All authentication and session functions with full logic
 Agent: "Found the issue in the session handler. Here's what's wrong..."
 ```
+
+**How It Works - Scoring Algorithm**:
+
+The search uses **keyword-ranked matching** (not vector embeddings). Here's how results are scored:
+
+1. **Filename match** (+4.0 points) — Query tokens in file/folder name
+2. **Function name match** (+3.0 points) — Query tokens in function names
+3. **Skeleton text match** (+0.8 per occurrence) — Query tokens in logic skeleton
+4. **Tag match** (+2.0 points) — Query tokens in #tags (#api-call, #state-heavy, etc)
+5. **Role bonus** (+1.0) — Files marked ENTRY or CORE get priority
+6. **LEGACY role penalty** (×0.5) — Deprecated code deprioritized
+
+**Confidence levels based on final score:**
+- HIGH: score ≥ 12
+- MED: score ≥ 5
+- LOW: score < 5
+
+**Stopwords filtered**: "the", "is", "and", "or", etc. are ignored
+
+**Token processing**: camelCase and snake_case automatically split:
+- "fetchUserBalance" → ["fetch", "user", "balance"]
+- "rate_limiting" → ["rate", "limiting"]
+
+This approach is simple, deterministic, and fast (~1-2 seconds on large codebases).
 
 **Important**: `query()` does NOT write to session.md. Results stay in chat.
 

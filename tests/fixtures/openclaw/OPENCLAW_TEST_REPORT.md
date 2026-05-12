@@ -28,7 +28,7 @@ All 8 major Contexly CLI commands have been successfully tested on OpenClaw, a r
 | 2 | `contexly tree` | ✅ PASS | Build complete logic skeleton & save outputs |
 | 3 | `contexly status` | ✅ PASS | Show tree summary & compression stats |
 | 4 | `contexly index` | ✅ PASS | Print compact file/function index |
-| 5 | `contexly query` | ✅ PASS | Semantic search with dependency expansion |
+| 5 | `contexly query` | ✅ PASS | Keyword-ranked search with dependency expansion |
 | 6 | `contexly impact` | ✅ PASS | Preview function edit impact & risk |
 | 7 | `contexly view` | ✅ PASS | Open interactive HTML visualization |
 | 8 | `contexly session` | ✅ PASS | Optional progress tracking for tasks |
