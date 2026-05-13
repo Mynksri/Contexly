@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contexly"
-version = "0.2.0-beta"
+version = "0.2.0"
 description = "Contexly codebase context engine - 1M lines to 35K tokens for any AI"
 requires-python = ">=3.10"
 license = {text = "MIT"}

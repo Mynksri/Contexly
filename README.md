@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)
-![Version](https://img.shields.io/badge/version-0.2.0--beta-orange)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 
 Contexly extracts the logic skeleton of your codebase: function signatures,
 conditions, calls, returns, and impact paths.
@@ -324,7 +324,7 @@ This validates Contexly's production readiness for large, multi-language enterpr
 
 ## Release Notes
 
-### v0.2.0-beta (May 2026) — Multi-Language & Framework Support
+### v0.2.0 (May 2026) — Multi-Language & Framework Support
 **Major Additions:**
 - **5 new compiled languages:** C, C++, Java, Rust, C# via tree-sitter with full function/class extraction
 - **2 frontend frameworks:** Vue and Svelte with reactive binding tracking (`v-model`, `bind:`, `$store`, etc.)
@@ -341,7 +341,7 @@ This validates Contexly's production readiness for large, multi-language enterpr
 
 **Breaking Changes:** None
 
-**Status:** Beta release — ready for production use, foundation for v0.2.0 Contexly Agent launch
+**Status:** Production release — foundation for v0.2.0 Contexly Agent launch
 
 ### v0.1.0 (April 2026) — Foundation
 - Core extraction engine (Python, JS, TS, Go)
