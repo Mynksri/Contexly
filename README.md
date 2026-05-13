@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.1-blue)
 
 Contexly extracts the logic skeleton of your codebase: function signatures,
 conditions, calls, returns, and impact paths.
@@ -324,7 +324,7 @@ This validates Contexly's production readiness for large, multi-language enterpr
 
 ## Release Notes
 
-### v0.2.0 (May 2026) — Multi-Language & Framework Support
+### v0.2.1 (May 2026) — Multi-Language & Framework Support
 **Major Additions:**
 - **5 new compiled languages:** C, C++, Java, Rust, C# via tree-sitter with full function/class extraction
 - **2 frontend frameworks:** Vue and Svelte with reactive binding tracking (`v-model`, `bind:`, `$store`, etc.)
@@ -341,7 +341,7 @@ This validates Contexly's production readiness for large, multi-language enterpr
 
 **Breaking Changes:** None
 
-**Status:** Production release — foundation for v0.2.0 Contexly Agent launch
+**Status:** Production release — foundation for v0.2.1 Contexly Agent launch
 
 ### v0.1.0 (April 2026) — Foundation
 - Core extraction engine (Python, JS, TS, Go)
@@ -380,7 +380,7 @@ If you hit a bad case, open an issue with a minimal repro project. That helps im
 - ✅ Impact analysis with risk tiers, call paths, and dataflow
 - ✅ MCP server for Claude, Copilot, Cursor, Windsurf, Continue
 
-### v0.2.0 — Agentic Coding Layer *(next)*
+### v0.2.1 — Agentic Coding Layer *(next)*
 - **Contexly Agent** — autonomous refactoring agent powered by Contexly logic maps; runs targeted multi-file edits with zero hallucinated hops
 - **VS Code Extension** — inline context panel, live impact preview, and one-click query from inside the editor
 - Ruby, PHP, Swift, Kotlin language support
