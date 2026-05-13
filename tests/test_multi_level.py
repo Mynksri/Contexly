@@ -641,6 +641,31 @@ class TestSearchFiltersAndMinScore:
         results = builder.search_index(tree, "execute trade", top_k=5, exclude_roles={"LEGACY"})
         assert all(r["role"] != "LEGACY" for r in results)
 
+
+class TestFrontendRoleClassification:
+    def test_html_frontend_page_is_not_generic_script(self, tmp_path):
+        (Path(tmp_path) / "index.html").write_text(
+            """
+<html>
+    <head><script src='/vendor/three.min.js'></script></head>
+    <body>
+        <div class='graph-shell panel' id='graph-root' data-state='ready'></div>
+        <script>
+            function initGraph() {
+                return document.querySelector('#graph-root');
+            }
+        </script>
+    </body>
+</html>
+"""
+        )
+        tree = TreeBuilder().build(str(tmp_path))
+        html_path = next(p for p in tree.nodes if p.endswith("index.html"))
+        assert tree.nodes[html_path].role in ("ENTRY", "CORE")
+        tags = TreeBuilder()._compute_tags(tree.nodes[html_path])
+        assert "#frontend" in tags
+        assert "#visualization" in tags or "#ui-shell" in tags
+
     def test_filter_by_min_score_keeps_entry(self):
         tree = _make_tree(str(Path(tempfile.mkdtemp())))
         builder = TreeBuilder()

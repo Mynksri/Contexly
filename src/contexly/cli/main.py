@@ -92,7 +92,12 @@ def _is_probable_path(value: str) -> bool:
         return True
     if any(sep in value for sep in ("/", "\\")):
         return True
-    return value.endswith((".py", ".js", ".mjs", ".ts", ".tsx", ".go", ".html", ".css"))
+    return value.endswith((
+        ".py", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".go",
+        ".html", ".htm", ".css", ".scss", ".sass", ".less",
+        ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx",
+        ".java", ".rs", ".cs", ".vue", ".svelte",
+    ))
 
 
 def _parse_tree_args(args: List[str]) -> Tuple[str, float]:

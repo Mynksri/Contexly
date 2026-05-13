@@ -157,7 +157,7 @@ class TreeBuilder:
                     nodes[conn].imported_by.append(path)
 
         # Classify every file
-        self._classify_files(nodes)
+        self._classify_files(nodes, skeletons)
         self._mark_legacy_files(nodes, skeletons)
 
         # Optional role filtering for token-efficient default output.
@@ -444,7 +444,11 @@ class TreeBuilder:
 
         return graph_lines[:60]
 
-    def _classify_files(self, nodes: Dict[str, "TreeNode"]):
+    def _classify_files(
+        self,
+        nodes: Dict[str, "TreeNode"],
+        skeletons: Dict[str, FileSkeleton],
+    ):
         """
         Assign a role to each file based on import graph analysis.
         Classification order (highest priority first):
@@ -484,6 +488,28 @@ class TreeBuilder:
                 continue
 
             fname = os.path.basename(path).lower()
+            skeleton = skeletons.get(path)
+
+            if skeleton and skeleton.language == "html":
+                html_text = node.skeleton_text.lower()
+                has_frontend_assets = any(
+                    marker in html_text
+                    for marker in (
+                        "html_classes =",
+                        "html_ids =",
+                        "data_attrs =",
+                        "external_libs =",
+                        "html_role_hints =",
+                        "<script",
+                        "class=",
+                        "classname=",
+                        "id=",
+                        "data-",
+                    )
+                )
+                if has_frontend_assets:
+                    node.role = "ENTRY" if not node.imported_by else "CORE"
+                    continue
 
             # Count how many NON-orphan files import this file
             quality_importers = [
@@ -1581,6 +1607,14 @@ class TreeBuilder:
             tags.append("#blockchain")
         if "class=" in skel or "id=" in skel or "data-" in skel:
             tags.append("#frontend")
+        if "html_role_hints" in skel or "external_libs" in skel:
+            tags.append("#frontend")
+        if any(token in skel for token in ("three.js", "gsap", "canvas", "graph", "renderer", "particle")):
+            tags.append("#visualization")
+        if any(token in skel for token in ("modal", "dialog", "drawer", "sidebar", "panel", "widget")):
+            tags.append("#ui-shell")
+        if any(token in skel for token in ("onclick", "oninput", "onchange", "event listener", "addEventListener")):
+            tags.append("#interactive")
         if "tailwind" in skel or "bg-" in skel or "text-" in skel or "px-" in skel:
             tags.append("#tailwind")
         if "css" in skel or "selector" in skel or "style" in skel:

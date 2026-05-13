@@ -15,7 +15,7 @@ EXCLUDES: print statements, comments, docstrings, variable assignments,
 
 import os
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional, Dict, Any
 from contexly.core.languages import get_config_for_file, LanguageConfig
 
@@ -33,6 +33,16 @@ try:
     TREE_SITTER_GO_AVAILABLE = True
 except ImportError:
     TREE_SITTER_GO_AVAILABLE = False
+
+try:
+    import tree_sitter_c as tsc
+    import tree_sitter_cpp as tscpp
+    import tree_sitter_java as tsjava
+    import tree_sitter_rust as tsrust
+    import tree_sitter_c_sharp as tscsharp
+    TREE_SITTER_SYSTEMS_AVAILABLE = True
+except ImportError:
+    TREE_SITTER_SYSTEMS_AVAILABLE = False
 
 
 @dataclass
@@ -124,6 +134,50 @@ class SkeletonExtractor:
         self._parsers: Dict[str, Any] = {}
         self._setup_parsers()
 
+    def _offset_function_skeleton(
+        self,
+        func: FunctionSkeleton,
+        line_offset: int,
+    ) -> FunctionSkeleton:
+        return replace(
+            func,
+            line_start=func.line_start + line_offset,
+            line_end=func.line_end + line_offset,
+        )
+
+    def _offset_class_skeleton(
+        self,
+        cls: ClassSkeleton,
+        line_offset: int,
+    ) -> ClassSkeleton:
+        return replace(
+            cls,
+            line_start=cls.line_start + line_offset,
+            methods=[
+                self._offset_function_skeleton(method, line_offset)
+                for method in cls.methods
+            ],
+        )
+
+    def _offset_file_skeleton(
+        self,
+        skeleton: FileSkeleton,
+        line_offset: int,
+        filepath: Optional[str] = None,
+    ) -> FileSkeleton:
+        return replace(
+            skeleton,
+            filepath=filepath or skeleton.filepath,
+            functions=[
+                self._offset_function_skeleton(func, line_offset)
+                for func in skeleton.functions
+            ],
+            classes=[
+                self._offset_class_skeleton(cls, line_offset)
+                for cls in skeleton.classes
+            ],
+        )
+
     def _setup_parsers(self):
         """Initialize tree-sitter parsers for each language."""
         if not TREE_SITTER_AVAILABLE:
@@ -147,6 +201,28 @@ class SkeletonExtractor:
             try:
                 GO_LANGUAGE = Language(tsgo.language())
                 self._parsers["go"] = Parser(GO_LANGUAGE)
+            except Exception:
+                pass
+
+        if TREE_SITTER_AVAILABLE and TREE_SITTER_SYSTEMS_AVAILABLE:
+            try:
+                self._parsers["c"] = Parser(Language(tsc.language()))
+            except Exception:
+                pass
+            try:
+                self._parsers["cpp"] = Parser(Language(tscpp.language()))
+            except Exception:
+                pass
+            try:
+                self._parsers["java"] = Parser(Language(tsjava.language()))
+            except Exception:
+                pass
+            try:
+                self._parsers["rust"] = Parser(Language(tsrust.language()))
+            except Exception:
+                pass
+            try:
+                self._parsers["csharp"] = Parser(Language(tscsharp.language()))
             except Exception:
                 pass
 
@@ -262,6 +338,12 @@ class SkeletonExtractor:
             candidate_nodes = [raw_node]
             if raw_node.type in ("export_statement", "export_declaration"):
                 candidate_nodes.extend(raw_node.children)
+            elif raw_node.type == "namespace_declaration":
+                # C#: classes live inside namespace_declaration → declaration_list
+                candidate_nodes = [raw_node]
+                for ns_child in raw_node.children:
+                    if ns_child.type == "declaration_list":
+                        candidate_nodes.extend(ns_child.children)
 
             for node in candidate_nodes:
                 if node.type in config.class_types:
@@ -573,9 +655,23 @@ class SkeletonExtractor:
                 name = child.text.decode("utf-8")
             if child.type == "async":
                 is_async = True
+            if child.type == "function_modifiers":
+                # Rust: async fn uses function_modifiers node
+                if "async" in child.text.decode("utf-8", errors="ignore"):
+                    is_async = True
             if child.type == "decorator":
                 dec_text = lines[child.start_point[0]].strip()
                 decorators.append(dec_text)
+
+        # For C/C++: function name lives inside function_declarator child
+        if not name:
+            for child in node.children:
+                if child.type == "function_declarator":
+                    for sub in child.children:
+                        if sub.type == "identifier":
+                            name = sub.text.decode("utf-8")
+                            break
+                    break
 
         # Fallback for TSX/JS exported function forms where identifier child may be absent.
         if not name:
@@ -598,17 +694,26 @@ class SkeletonExtractor:
 
         # Get parameters
         for child in node.children:
-            if child.type in ("parameters", "formal_parameters"):
+            if child.type in ("parameters", "formal_parameters", "parameter_list"):
                 for param in child.children:
                     if param.type in ("identifier", "property_identifier"):
                         pname = param.text.decode("utf-8")
-                        if pname != "self" and pname != "cls":
+                        if pname not in ("self", "cls"):
                             parameters.append(pname)
+            elif child.type == "function_declarator":
+                # C/C++: parameters are inside function_declarator → parameter_list
+                for sub in child.children:
+                    if sub.type in ("parameters", "formal_parameters", "parameter_list"):
+                        for param in sub.children:
+                            if param.type in ("identifier", "property_identifier"):
+                                pname = param.text.decode("utf-8")
+                                if pname not in ("self", "cls"):
+                                    parameters.append(pname)
 
         # Get function body details
         body_node = None
         for child in node.children:
-            if child.type == "block" or child.type == "statement_block":
+            if child.type in ("block", "statement_block", "compound_statement"):
                 body_node = child
                 break
 
@@ -1232,19 +1337,26 @@ class SkeletonExtractor:
         fields = []
 
         for child in node.children:
-            if child.type == "identifier":
+            if child.type in ("identifier", "type_identifier"):
                 name = child.text.decode("utf-8")
-            elif child.type == "argument_list" or child.type == "base_clause":
+            elif child.type in ("argument_list", "base_clause", "base_list", "base_class_clause"):
                 for base in child.children:
-                    if base.type == "identifier":
+                    if base.type in ("identifier", "type_identifier"):
                         bases.append(base.text.decode("utf-8"))
 
         if not name:
             return None
 
+        # Body containers across languages:
+        # Python: block | Java: class_body | C#/Rust impl: declaration_list
+        # C++: field_declaration_list | Rust struct: field_declaration_list
+        BODY_CONTAINERS = (
+            "block", "class_body", "declaration_list", "field_declaration_list"
+        )
+
         # Extract methods and fields from class body
         for child in node.children:
-            if child.type == "block":
+            if child.type in BODY_CONTAINERS:
                 for item in child.children:
                     if item.type in config.function_types:
                         method = self._extract_function(
@@ -1256,6 +1368,11 @@ class SkeletonExtractor:
                         line = lines[item.start_point[0]].strip()
                         # Dataclass field pattern: name: type or name: type = default
                         if re.match(r'^\w+\s*:', line) and not line.startswith('#'):
+                            fields.append(line[:60])
+                    elif item.type == "field_declaration":
+                        # Java/C# field declarations
+                        line = lines[item.start_point[0]].strip()
+                        if line and not line.startswith("//"):
                             fields.append(line[:60])
 
         purpose = self._extract_symbol_purpose(
@@ -1297,6 +1414,9 @@ class SkeletonExtractor:
         if config.name == "html":
             imports = self._extract_html_imports(source)
             constants = self._extract_frontend_signals(source, mode="html")
+            embedded_imports, embedded_constants, embedded_functions = self._extract_embedded_html_scripts(source, filepath)
+            imports.extend(embedded_imports)
+            constants.extend(embedded_constants)
             functions = [FunctionSkeleton(
                 name="render_template",
                 line_start=1,
@@ -1315,6 +1435,7 @@ class SkeletonExtractor:
                 sections=[],
                 state_writes=[],
             )]
+            functions.extend(embedded_functions)
             return FileSkeleton(
                 filepath=filepath,
                 language=config.name,
@@ -1357,6 +1478,50 @@ class SkeletonExtractor:
                 functions=functions,
                 classes=[],
                 constants=constants[:30],
+                has_main_guard=False,
+                is_entry_point=False,
+                total_lines=len(lines),
+                skeleton_lines=0,
+                token_estimate=0,
+            )
+
+        if config.name in ("vue", "svelte"):
+            imports = self._extract_html_imports(source)
+            constants = self._extract_frontend_signals(source, mode="html")
+            template_signals = self._extract_vue_svelte_signals(source, config.name)
+            constants.extend(template_signals)
+            embedded_imports, embedded_constants, embedded_functions = (
+                self._extract_embedded_html_scripts(source, filepath)
+            )
+            imports.extend(embedded_imports)
+            constants.extend(embedded_constants)
+            component_name = Path(filepath).stem or "component"
+            functions = [FunctionSkeleton(
+                name=component_name,
+                line_start=1,
+                line_end=max(1, len(lines)),
+                is_async=False,
+                is_method=False,
+                class_name=None,
+                parameters=[],
+                calls=[],
+                conditions=[],
+                returns=["return component markup"],
+                raises=[],
+                decorators=[],
+                logic_vars=[],
+                purpose=f"{config.name} component with reactive template and script logic",
+                sections=[],
+                state_writes=[],
+            )]
+            functions.extend(embedded_functions)
+            return FileSkeleton(
+                filepath=filepath,
+                language=config.name,
+                imports=imports,
+                functions=functions,
+                classes=[],
+                constants=list(dict.fromkeys(constants))[:30],
                 has_main_guard=False,
                 is_entry_point=False,
                 total_lines=len(lines),
@@ -1504,6 +1669,61 @@ class SkeletonExtractor:
             imports.append(f"import {m.group(1)}")
         return list(dict.fromkeys(imports))[:20]
 
+    def _extract_embedded_html_scripts(
+        self,
+        source: str,
+        filepath: str,
+    ) -> tuple[List[str], List[str], List[FunctionSkeleton]]:
+        """Extract inline HTML <script> blocks and parse them as JavaScript."""
+        import re
+
+        external_imports: List[str] = []
+        constants: List[str] = []
+        functions: List[FunctionSkeleton] = []
+
+        js_config = get_config_for_file("inline.js")
+        if js_config is None or js_config.name not in self._parsers:
+            return external_imports, constants, functions
+
+        script_re = re.compile(r"<script\b([^>]*)>(.*?)</script>", flags=re.I | re.S)
+        inline_count = 0
+
+        for match in script_re.finditer(source):
+            attrs = match.group(1) or ""
+            body = (match.group(2) or "").strip()
+
+            src_match = re.search(r"\bsrc\s*=\s*['\"]([^'\"]+)['\"]", attrs, flags=re.I)
+            if src_match:
+                external_imports.append(f"import {src_match.group(1)}")
+                continue
+
+            type_match = re.search(r"\btype\s*=\s*['\"]([^'\"]+)['\"]", attrs, flags=re.I)
+            if type_match:
+                script_type = type_match.group(1).lower()
+                if "json" in script_type or "ld+json" in script_type:
+                    continue
+
+            if not body:
+                continue
+
+            inline_count += 1
+            line_offset = source[:match.start()].count("\n")
+            embedded = self._extract_with_tree_sitter(
+                body,
+                f"{filepath}#inline-script-{inline_count}.js",
+                js_config,
+            )
+            embedded = self._offset_file_skeleton(
+                embedded,
+                line_offset=line_offset,
+                filepath=f"{filepath}#inline-script-{inline_count}.js",
+            )
+            functions.extend(embedded.functions)
+            constants.extend(embedded.constants)
+            constants.extend(self._extract_frontend_signals(body, mode="script"))
+
+        return external_imports, constants, functions
+
     def _extract_css_imports(self, source: str) -> List[str]:
         import re
         imports: List[str] = []
@@ -1525,6 +1745,8 @@ class SkeletonExtractor:
         data_attrs: List[str] = []
         selectors: List[str] = []
         tailwind_tokens: List[str] = []
+        external_assets: List[str] = []
+        role_hints: List[str] = []
 
         # HTML-like attributes in markup and JSX/TSX.
         attr_patterns = [
@@ -1540,6 +1762,11 @@ class SkeletonExtractor:
 
         for m in re.finditer(r"\b(data-[A-Za-z0-9_-]+)\s*=", source):
             data_attrs.append(m.group(1))
+
+        for m in re.finditer(r"<script[^>]*src\s*=\s*['\"]([^'\"]+)['\"]", source, flags=re.I):
+            external_assets.append(m.group(1))
+        for m in re.finditer(r"<link[^>]*href\s*=\s*['\"]([^'\"]+)['\"]", source, flags=re.I):
+            external_assets.append(m.group(1))
 
         # CSS selectors.
         for m in re.finditer(r"(^|\n)\s*([^\{\n]+)\{", source):
@@ -1568,6 +1795,17 @@ class SkeletonExtractor:
             if token.startswith(tw_prefixes):
                 tailwind_tokens.append(token)
 
+        role_signals = " ".join(class_names + ids + selectors + external_assets).lower()
+        role_map = {
+            "visualization": ("canvas", "graph", "chart", "viz", "render", "three", "particle", "scene"),
+            "interactive-ui": ("panel", "modal", "dialog", "drawer", "sidebar", "shell", "dashboard", "widget"),
+            "animation": ("animate", "animation", "transition", "gsap", "motion"),
+            "editor": ("editor", "code", "monaco", "ace"),
+        }
+        for label, keywords in role_map.items():
+            if any(keyword in role_signals for keyword in keywords):
+                role_hints.append(label)
+
         class_names = list(dict.fromkeys(class_names))[:20]
         ids = list(dict.fromkeys(ids))[:20]
         data_attrs = list(dict.fromkeys(data_attrs))[:20]
@@ -1584,8 +1822,64 @@ class SkeletonExtractor:
             constants.append(f"CSS_SELECTORS = {','.join(selectors[:12])}")
         if tailwind_tokens:
             constants.append(f"TAILWIND_CLASSES = {','.join(tailwind_tokens)}")
+        if external_assets:
+            constants.append(f"EXTERNAL_LIBS = {','.join(list(dict.fromkeys(external_assets))[:12])}")
+        if role_hints:
+            constants.append(f"HTML_ROLE_HINTS = {','.join(list(dict.fromkeys(role_hints))[:6])}")
 
         return constants
+
+    def _extract_vue_svelte_signals(self, source: str, framework: str) -> List[str]:
+        """
+        Extract reactive bindings and directives from Vue/Svelte templates.
+        Vue:   v-model, v-bind (:prop), v-on (@event), v-if, v-for, emit, defineProps
+        Svelte: bind:, on:, {#if}, {#each}, $store, export let
+        """
+        import re
+        signals: List[str] = []
+
+        if framework == "vue":
+            # v-model bindings
+            models = re.findall(r'v-model(?::[a-z-]+)?\s*=\s*["\']([^"\']+)["\']', source)
+            if models:
+                signals.append(f"VUE_MODELS = {','.join(list(dict.fromkeys(models))[:12])}")
+            # v-bind / shorthand :prop
+            binds = re.findall(r'(?:v-bind:|:)([a-zA-Z_][a-zA-Z0-9_-]*)\s*=', source)
+            binds = [b for b in binds if b not in ("class", "style", "key", "ref")]
+            if binds:
+                signals.append(f"VUE_BINDINGS = {','.join(list(dict.fromkeys(binds))[:12])}")
+            # v-on / @event
+            events = re.findall(r'(?:v-on:|@)([a-zA-Z_][a-zA-Z0-9_-]*)\s*=', source)
+            if events:
+                signals.append(f"VUE_EVENTS = {','.join(list(dict.fromkeys(events))[:12])}")
+            # defineProps / defineEmits
+            props = re.findall(r'defineProps[<(]["\']?([A-Za-z_, ]+)["\']?', source)
+            if props:
+                signals.append(f"VUE_PROPS = {','.join(props[:8])}")
+            emits = re.findall(r'defineEmits\(\[([^\]]+)\]\)', source)
+            if emits:
+                signals.append(f"VUE_EMITS = {emits[0][:80]}")
+
+        elif framework == "svelte":
+            # bind: directives
+            binds = re.findall(r'bind:([a-zA-Z_][a-zA-Z0-9_]*)', source)
+            if binds:
+                signals.append(f"SVELTE_BINDS = {','.join(list(dict.fromkeys(binds))[:12])}")
+            # on: event handlers
+            events = re.findall(r'on:([a-zA-Z_][a-zA-Z0-9_]*)', source)
+            if events:
+                signals.append(f"SVELTE_EVENTS = {','.join(list(dict.fromkeys(events))[:12])}")
+            # export let props
+            props = re.findall(r'export\s+let\s+([a-zA-Z_][a-zA-Z0-9_]*)', source)
+            if props:
+                signals.append(f"SVELTE_PROPS = {','.join(list(dict.fromkeys(props))[:12])}")
+            # $store references
+            stores = re.findall(r'\$([a-zA-Z_][a-zA-Z0-9_]*)\b', source)
+            stores = [s for s in stores if len(s) > 2]
+            if stores:
+                signals.append(f"SVELTE_STORES = {','.join(list(dict.fromkeys(stores))[:12])}")
+
+        return signals
 
     def to_text(self, skeleton: FileSkeleton) -> str:
         """

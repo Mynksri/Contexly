@@ -6,7 +6,7 @@
 [![PyPI](https://img.shields.io/pypi/v/contexly)](https://pypi.org/project/contexly/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Tests](https://img.shields.io/badge/tests-79%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen)
 ![Version](https://img.shields.io/badge/version-0.1.0-orange)
 
 Contexly extracts the logic skeleton of your codebase: function signatures,
@@ -82,11 +82,26 @@ Same understanding. 25x fewer tokens.
 | Language | Extensions | Parser |
 |---|---|---|
 | Python | `.py` | tree-sitter |
-| JavaScript | `.js`, `.mjs` | tree-sitter |
+| JavaScript | `.js`, `.jsx`, `.mjs` | tree-sitter |
 | TypeScript | `.ts`, `.tsx` | tree-sitter |
 | Go | `.go` | tree-sitter |
-| HTML | `.html`, `.htm` | fallback parser + frontend signal tracker |
-| CSS | `.css`, `.scss`, `.sass`, `.less` | fallback parser + selector tracker |
+| C | `.c`, `.h` | tree-sitter |
+| C++ | `.cpp`, `.hpp`, `.cc`, `.hh`, `.cxx` | tree-sitter |
+| Java | `.java` | tree-sitter |
+| Rust | `.rs` | tree-sitter |
+| C# | `.cs` | tree-sitter |
+| HTML | `.html`, `.htm` | fallback + embedded `<script>` extraction + frontend signal tracker |
+| CSS | `.css`, `.scss`, `.sass`, `.less` | fallback + selector tracker |
+| Vue | `.vue` | fallback + `<script>` extraction + reactive binding tracker |
+| Svelte | `.svelte` | fallback + `<script>` extraction + reactive binding tracker |
+
+Frontend-aware extraction covers:
+- JSX/TSX component patterns
+- HTML classes, ids, data-attributes
+- External script and stylesheet links
+- Inline `<script>` blocks parsed through the JavaScript extractor
+- Vue `v-model`, `v-bind`, `v-on`, `defineProps`, `defineEmits`
+- Svelte `bind:`, `on:`, `export let`, `$store` references
 
 Files with unsupported extensions are skipped automatically.
 
@@ -321,6 +336,8 @@ This validates Contexly's production readiness for large, multi-language enterpr
 ## Known Limitations
 
 - React/TSX extraction is much better now, but highly dynamic component patterns can still produce partial skeletons.
+- C/C++ function extraction uses tree-sitter; header-only templates and macro-heavy code may produce thin output.
+- Vue/Svelte use script-block extraction (no dedicated tree-sitter grammar); deeply nested reactive logic may be partially captured.
 - Import connection quality depends on resolver hints (`tsconfig.json` paths, Vite aliases, re-export patterns).
 - If output looks stale or unexpectedly thin, use `--rebuild` to bypass cache and regenerate context.
 
@@ -328,13 +345,31 @@ If you hit a bad case, open an issue with a minimal repro project. That helps im
 
 ## Roadmap
 
-- v0.2.0 - AI coding agent CLI (automated refactoring powered by Contexly logic maps)
-- v0.2.0 - VS Code extension (interactive context + impact visualization in editor)
-- v0.2.0 - Rust support (foundation ready)
-- v0.3.0 - Cloud context sync (share context snapshots across teams)
-- v0.3.0 - Java support
+### v0.1.x — Stability & Language Coverage (current)
+- ✅ Core extraction engine (Python, JS, TS, Go)
+- ✅ HTML/CSS frontend-aware extraction with inline script parsing
+- ✅ C, C++, Java, Rust, C# via tree-sitter
+- ✅ Vue and Svelte component extraction with reactive binding tracking
+- ✅ Impact analysis with risk tiers, call paths, and dataflow
+- ✅ MCP server for Claude, Copilot, Cursor, Windsurf, Continue
 
-**Currently Supported Languages:** Python, JavaScript, TypeScript, Go
+### v0.2.0 — Agentic Coding Layer *(next)*
+- **Contexly Agent** — autonomous refactoring agent powered by Contexly logic maps; runs targeted multi-file edits with zero hallucinated hops
+- **VS Code Extension** — inline context panel, live impact preview, and one-click query from inside the editor
+- Ruby, PHP, Swift, Kotlin language support
+- Richer call graph visualization in the HTML tree explorer
+
+### v0.3.0 — Team & Cloud
+- **Contexly Cloud** — share, version, and diff context snapshots across teams; no raw code leaves your machine
+- GitHub Actions integration — auto-generate context on every PR for faster agent-assisted reviews
+- Fine-grained `.contexlyignore` rules and multi-repo workspace support
+
+### v1.0.0 — Platform
+- **contexly.dev** — web dashboard for browsing, searching, and sharing public repo context maps
+- API for programmatic context retrieval (SaaS-ready)
+- Enterprise SSO, audit logs, and private deployment options
+
+**Currently Supported Languages:** Python, JavaScript, TypeScript, Go, C, C++, Java, Rust, C#, HTML, CSS, Vue, Svelte
 
 ## Contributing
 
