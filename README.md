@@ -341,7 +341,7 @@ This validates Contexly's production readiness for large, multi-language enterpr
 
 **Breaking Changes:** None
 
-**Status:** Production release — foundation for v0.2.1 Contexly Agent launch
+**Status:** Production release — available on PyPI (`pip install contexly`)
 
 ### v0.1.0 (April 2026) — Foundation
 - Core extraction engine (Python, JS, TS, Go)
@@ -372,15 +372,16 @@ If you hit a bad case, open an issue with a minimal repro project. That helps im
 
 ## Roadmap
 
-### v0.1.x — Stability & Language Coverage (current)
+### v0.2.1 — Multi-Language & Framework Support *(current — released May 2026)*
 - ✅ Core extraction engine (Python, JS, TS, Go)
 - ✅ HTML/CSS frontend-aware extraction with inline script parsing
-- ✅ C, C++, Java, Rust, C# via tree-sitter
+- ✅ C, C++, Java, Rust, C# via tree-sitter (5 new compiled languages)
 - ✅ Vue and Svelte component extraction with reactive binding tracking
 - ✅ Impact analysis with risk tiers, call paths, and dataflow
 - ✅ MCP server for Claude, Copilot, Cursor, Windsurf, Continue
+- ✅ 88 passing tests across all 13 languages
 
-### v0.2.1 — Agentic Coding Layer *(next)*
+### v0.3.0 — Agentic Coding Layer *(next)*
 - **Contexly Agent** — autonomous refactoring agent powered by Contexly logic maps; runs targeted multi-file edits with zero hallucinated hops
 - **VS Code Extension** — inline context panel, live impact preview, and one-click query from inside the editor
 - Ruby, PHP, Swift, Kotlin language support
